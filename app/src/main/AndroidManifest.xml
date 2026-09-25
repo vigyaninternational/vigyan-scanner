@@ -5,6 +5,10 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
+    <!-- Quick scan: the app's own camera (Google's scanner needs no permission). -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+
     <!-- Only needed on Android 9 and older to save into the Download folder. -->
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"

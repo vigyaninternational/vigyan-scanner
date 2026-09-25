@@ -126,6 +126,12 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit, onNavigate: 
         val uri = cameraUri
         if (ok && uri != null) vm.passportFromUri(uri) { onNavigate("passport") }
     }
+    // The app declares the camera permission (for Quick scan), so Android wants it granted before the camera app opens.
+    val cameraPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
+        val uri = cameraUri
+        if (ok && uri != null) runCatching { camera.launch(uri) }.onFailure { vm.say("Camera not available") }
+        else if (!ok) vm.say("Allow the camera to take a photo")
+    }
     val gallery = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) vm.passportFromUri(uri) { onNavigate("passport") }
     }
@@ -281,6 +287,13 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit, onNavigate: 
                             Text("Document Scanner", style = MaterialTheme.typography.bodyMedium)
                         }
                     }
+                }
+                item {
+                    ActionCard(
+                        "Quick scan: many pages, fast",
+                        "Camera stays open. Tap, press volume, or let Auto snap each page as you turn it.",
+                        "⚡", CardCyan, Modifier.fillMaxWidth(),
+                    ) { onNavigate("quickscan") }
                 }
                 item {
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -448,11 +461,15 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit, onNavigate: 
                     listOf(1, 2, 3).forEach { n ->
                         ChoiceRow(if (n == 1) "1 page (one page per student)" else "$n pages per student", false) {
                             dialog = ""
-                            batchPerForm = n
-                            mode = ScanMode.DOCUMENT
-                            startScanner(100)
+                            // Quick scan: the camera stays open, so a pile of forms goes fast.
+                            onNavigate("quickscan?batch=$n")
                         }
                     }
+                    Text(
+                        "The fast camera opens: turn the pages one by one (Auto snaps each), then tap Done.",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
                 }
             },
             confirmButton = { TextButton(onClick = { dialog = "" }) { Text("Cancel") } },
@@ -483,7 +500,11 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit, onNavigate: 
                         val file = java.io.File(dir, "photo_${System.currentTimeMillis()}.jpg")
                         val uri = androidx.core.content.FileProvider.getUriForFile(context, context.packageName + ".files", file)
                         cameraUri = uri
-                        runCatching { camera.launch(uri) }.onFailure { vm.say("Camera not available") }
+                        if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.CAMERA) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                            runCatching { camera.launch(uri) }.onFailure { vm.say("Camera not available") }
+                        } else {
+                            cameraPermission.launch(android.Manifest.permission.CAMERA)
+                        }
                     }, modifier = Modifier.fillMaxWidth()) { Text("Take a photo") }
                     OutlinedButton(onClick = { dialog = ""; gallery.launch("image/*") }, modifier = Modifier.fillMaxWidth()) {
                         Text("Choose from gallery")
@@ -575,6 +596,7 @@ private val CardPink = listOf(Color(0xFFAD1457), Color(0xFFEC407A))
 private val CardOrange = listOf(Color(0xFFBF360C), Color(0xFFFF7043))
 private val CardGreen = listOf(Color(0xFF1B5E20), Color(0xFF43A047))
 private val CardAmber = listOf(Color(0xFFE65100), Color(0xFFFFA000))
+private val CardCyan = listOf(Color(0xFF004D60), Color(0xFF0097A7))
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable

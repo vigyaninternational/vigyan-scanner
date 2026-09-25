@@ -195,3 +195,50 @@ class OcrLayoutFallbackTest {
         assertEquals("ଓଡ଼ିଆ text", rows)
     }
 }
+
+class QuickScanLogicTest {
+    @Test
+    fun autoShutterWaitsForStillThenForNewPage() {
+        val s = QuickScanLogic.AutoShutter(stillMs = 800)
+        var t = 0L
+        fun frame(diff: Double) = s.onFrame(diff, 150.0, t).also { t += 100 }
+        assertEquals(false, frame(2.0)) // still starts
+        repeat(7) { assertEquals(false, frame(2.0)) }
+        assertEquals(true, frame(2.0)) // 800 ms still → snap
+        repeat(20) { assertEquals(false, frame(2.0)) } // same page: no second snap
+        assertEquals(false, frame(40.0)) // page turned
+        repeat(8) { assertEquals(false, frame(2.0)) }
+        assertEquals(true, frame(2.0)) // next page
+    }
+
+    @Test
+    fun darkViewNeverSnaps() {
+        val s = QuickScanLogic.AutoShutter(stillMs = 100)
+        repeat(20) { assertEquals(false, s.onFrame(1.0, 10.0, it * 100L)) }
+    }
+
+    @Test
+    fun findsPaperOnDarkTable() {
+        val w = 100
+        val h = 140
+        val lum = IntArray(w * h) { 60 } // table
+        for (y in 20 until 120) for (x in 15 until 85) lum[y * w + x] = 220 // paper
+        val b = QuickScanLogic.paperBox(lum, w, h)!!
+        assertEquals(listOf(15, 20, 84, 119), b.toList())
+    }
+
+    @Test
+    fun paperFillingTheFrameIsNotCropped() {
+        val lum = IntArray(100 * 100) { 220 }
+        for (i in 0 until 300) lum[i * 7 % lum.size] = 30 // some text
+        assertNull(QuickScanLogic.paperBox(lum, 100, 100))
+    }
+
+    @Test
+    fun levelsStretchPaperToWhite() {
+        val lum = IntArray(1000) { if (it < 100) 40 else 190 }
+        val (black, white) = QuickScanLogic.levels(lum)
+        assertEquals(40, black)
+        assertEquals(190, white)
+    }
+}

@@ -5,6 +5,7 @@ import android.net.Uri
 import android.os.Bundle
 import androidx.activity.compose.BackHandler
 import android.os.SystemClock
+import android.view.KeyEvent
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.compose.runtime.mutableStateOf
@@ -40,6 +41,7 @@ import com.vigyan.scanner.ui.AnnotateScreen
 import com.vigyan.scanner.ui.AppLockScreen
 import com.vigyan.scanner.ui.BackupScreen
 import com.vigyan.scanner.ui.LockScreen
+import com.vigyan.scanner.ui.QuickScanScreen
 import com.vigyan.scanner.ui.fingerprintAvailable
 import com.vigyan.scanner.ui.BrandingScreen
 import com.vigyan.scanner.ui.ChecklistScreen
@@ -87,6 +89,16 @@ class MainActivity : FragmentActivity() {
                 }
             }
         }
+    }
+
+    /** In Quick scan the volume keys work as the shutter. */
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        val handler = VolumeKeys.handler
+        if (handler != null && !locked && (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN || keyCode == KeyEvent.KEYCODE_VOLUME_UP)) {
+            if (event?.repeatCount == 0) handler()
+            return true
+        }
+        return super.onKeyDown(keyCode, event)
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -251,6 +263,27 @@ class MainActivity : FragmentActivity() {
                 scans.firstOrNull { it.id == entry.arguments?.getString("id") }?.let { scan ->
                     AnnotateScreen(vm, scan, entry.arguments?.getString("page")?.toIntOrNull() ?: 0, onBack = { nav.popBackStack() })
                 }
+            }
+            composable(
+                "quickscan?batch={batch}",
+                arguments = listOf(navArgument("batch") { type = NavType.StringType; defaultValue = "0" }),
+            ) { entry ->
+                val batch = entry.arguments?.getString("batch")?.toIntOrNull() ?: 0
+                QuickScanScreen(
+                    onCancel = { nav.popBackStack() },
+                    onDone = { files ->
+                        val uris = files.map { Uri.fromFile(it) }
+                        if (batch > 0) {
+                            nav.popBackStack()
+                            vm.batchFill(uris, batch) {}
+                        } else {
+                            vm.saveNewScan(uris, sort = true) { scan ->
+                                nav.popBackStack()
+                                nav.navigate("scan/${scan.id}")
+                            }
+                        }
+                    },
+                )
             }
             composable("backup") { BackupScreen(vm, onBack = { nav.popBackStack() }) }
             composable("applock") { AppLockScreen(onBack = { nav.popBackStack() }, say = vm::say) }
