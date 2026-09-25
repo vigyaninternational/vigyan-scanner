@@ -22,6 +22,8 @@ data class Scan(
     /** Text rebuilt row by row (label and value side by side), used by Smart Fill. */
     val rows: String?,
     val fields: Map<String, String>,
+    /** A marksheet has been read and saved for this scan (see MarksRecord). */
+    val hasMarks: Boolean = false,
 )
 
 /**
@@ -168,6 +170,41 @@ class ScanRepository(private val context: Context) {
         return load(scan.dir)!!
     }
 
+    // ---- Marksheet ----
+
+    private fun marksFile(scan: Scan) = File(scan.dir, "marks.json")
+
+    fun loadMarks(scan: Scan): MarksRecord? {
+        val f = marksFile(scan)
+        if (!f.exists()) return null
+        return try {
+            val j = JSONObject(f.readText())
+            val arr = j.getJSONArray("subjects")
+            MarksRecord(
+                name = j.optString("name"),
+                roll = j.optString("roll"),
+                category = j.optString("category"),
+                subjects = (0 until arr.length()).map { i ->
+                    val s = arr.getJSONArray(i)
+                    SubjectMark(s.getString(0), s.getInt(1), s.getInt(2))
+                },
+                printedTotal = j.optInt("printedTotal"),
+                printedMax = j.optInt("printedMax"),
+            )
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    fun saveMarks(scan: Scan, m: MarksRecord) {
+        val subjects = JSONArray()
+        m.subjects.forEach { subjects.put(JSONArray().put(it.subject).put(it.max).put(it.obtained)) }
+        marksFile(scan).writeText(
+            JSONObject().put("name", m.name).put("roll", m.roll).put("category", m.category)
+                .put("subjects", subjects).put("printedTotal", m.printedTotal).put("printedMax", m.printedMax).toString(),
+        )
+    }
+
     // ---- Folders ----
 
     fun folders(scans: List<Scan>): List<String> {
@@ -242,6 +279,7 @@ class ScanRepository(private val context: Context) {
                 text = File(dir, TEXT).takeIf { it.exists() }?.readText(),
                 rows = File(dir, ROWS).takeIf { it.exists() }?.readText(),
                 fields = fields,
+                hasMarks = File(dir, "marks.json").exists(),
             )
         } catch (e: Exception) {
             null

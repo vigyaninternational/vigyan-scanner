@@ -26,7 +26,16 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.NavType
+import androidx.navigation.navArgument
 import com.vigyan.scanner.ui.BusyDialog
+import com.vigyan.scanner.ui.BrandingScreen
+import com.vigyan.scanner.ui.ChecklistScreen
+import com.vigyan.scanner.ui.CutoutScreen
+import com.vigyan.scanner.ui.MarksheetScreen
+import com.vigyan.scanner.ui.PassportScreen
+import com.vigyan.scanner.ui.StudentDocsScreen
+import com.vigyan.scanner.ui.rememberScanner
 import com.vigyan.scanner.ui.DetailScreen
 import com.vigyan.scanner.ui.FillScreen
 import com.vigyan.scanner.ui.HomeScreen
@@ -121,24 +130,55 @@ class MainActivity : ComponentActivity() {
 
         NavHost(nav, startDestination = "home") {
             composable("home") {
-                HomeScreen(vm) { scan, mode ->
-                    nav.navigate("scan/${scan.id}")
-                    when (mode) {
-                        ScanMode.TEXT -> nav.navigate("text/${scan.id}")
-                        ScanMode.FILL -> nav.navigate("fill/${scan.id}")
-                        ScanMode.DOCUMENT -> Unit
-                    }
-                }
+                HomeScreen(
+                    vm,
+                    onOpen = { scan, mode ->
+                        nav.navigate("scan/${scan.id}")
+                        when (mode) {
+                            ScanMode.TEXT -> nav.navigate("text/${scan.id}")
+                            ScanMode.FILL -> nav.navigate("fill/${scan.id}")
+                            ScanMode.DOCUMENT -> Unit
+                        }
+                    },
+                    onNavigate = { nav.navigate(it) },
+                )
             }
-            composable("scan/{id}") { entry ->
+            composable(
+                "scan/{id}?resize={resize}",
+                arguments = listOf(navArgument("resize") { type = NavType.StringType; defaultValue = "0" }),
+            ) { entry ->
                 scans.firstOrNull { it.id == entry.arguments?.getString("id") }?.let { scan ->
                     DetailScreen(
                         vm, scan,
+                        openResize = entry.arguments?.getString("resize") == "1",
                         onBack = { nav.popBackStack() },
                         onText = { nav.navigate("text/${scan.id}") },
                         onFill = { nav.navigate("fill/${scan.id}") },
+                        onTool = { tool -> nav.navigate(if (tool == "marks") "marks/${scan.id}" else tool) },
                     )
                 }
+            }
+            composable("marks/{id}") { entry ->
+                scans.firstOrNull { it.id == entry.arguments?.getString("id") }
+                    ?.let { MarksheetScreen(vm, it, onBack = { nav.popBackStack() }) }
+            }
+            composable("passport") { PassportScreen(vm, onBack = { nav.popBackStack() }) }
+            composable("cutout") {
+                CutoutScreen(vm, onBack = { nav.popBackStack() }, onBranding = { nav.navigate("branding") })
+            }
+            composable("branding") {
+                val scanner = rememberScanner(onError = vm::say) { uris -> vm.cutoutFromUris(uris) { nav.navigate("cutout") } }
+                BrandingScreen(vm, onBack = { nav.popBackStack() }, onScanCutout = { scanner(1) })
+            }
+            composable("checklist") {
+                ChecklistScreen(vm, onBack = { nav.popBackStack() }, onStudent = { nav.navigate("student/$it") })
+            }
+            composable("student/{id}") { entry ->
+                StudentDocsScreen(
+                    vm, entry.arguments?.getString("id").orEmpty(),
+                    onBack = { nav.popBackStack() },
+                    onOpenScan = { nav.navigate("scan/$it") },
+                )
             }
             composable("text/{id}") { entry ->
                 scans.firstOrNull { it.id == entry.arguments?.getString("id") }

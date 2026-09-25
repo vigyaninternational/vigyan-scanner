@@ -79,11 +79,12 @@ enum class ScanMode { DOCUMENT, TEXT, FILL }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit) {
+fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit, onNavigate: (String) -> Unit) {
     val scans by vm.scans.collectAsStateWithLifecycle()
     val folders by vm.folders.collectAsStateWithLifecycle()
     val folder by vm.currentFolder.collectAsStateWithLifecycle()
     val hindi by vm.hindi.collectAsStateWithLifecycle()
+    val autoSort by vm.autoSort.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     var mode by rememberSaveable { mutableStateOf(ScanMode.DOCUMENT) }
@@ -99,12 +100,28 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit) {
             vm.batchFill(pages, batchPerForm) {}
             batchPerForm = 0
         } else {
-            vm.saveNewScan(pages) { onOpen(it, mode) }
+            vm.saveNewScan(pages, sort = mode == ScanMode.DOCUMENT) { onOpen(it, mode) }
         }
     }
     val importPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) vm.importUris(uris) { onOpen(it, ScanMode.DOCUMENT) }
     }
+
+    // Resize for portal: pick a photo/PDF, then open it with the resize dialog showing.
+    val resizePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) vm.importUris(uris, sort = false) { onNavigate("scan/${it.id}?resize=1") }
+    }
+    // Passport photo: from the camera or the gallery.
+    var cameraUri by rememberSaveable { mutableStateOf<android.net.Uri?>(null) }
+    val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
+        val uri = cameraUri
+        if (ok && uri != null) vm.passportFromUri(uri) { onNavigate("passport") }
+    }
+    val gallery = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) vm.passportFromUri(uri) { onNavigate("passport") }
+    }
+    // Signature cut-out: scan the signature with the document scanner.
+    val signatureScanner = rememberScanner(onError = vm::say) { uris -> vm.cutoutFromUris(uris) { onNavigate("cutout") } }
 
     fun scan(m: ScanMode) {
         mode = m
@@ -162,6 +179,22 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit) {
                                 onClick = { menu = false; dialog = "csv" },
                             )
                             DropdownMenuItem(
+                                text = { Text("Merit list (from marksheets)") },
+                                onClick = { menu = false; dialog = "merit" },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("College stamp & signature") },
+                                onClick = { menu = false; onNavigate("branding") },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Auto-sort new scans: " + if (autoSort) "On" else "Off") },
+                                onClick = { menu = false; vm.setAutoSort(!autoSort) },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Sort scans not in a folder") },
+                                onClick = { menu = false; vm.sortUnsorted() },
+                            )
+                            DropdownMenuItem(
                                 text = { Text("New folder") },
                                 onClick = { menu = false; dialog = "newFolder" },
                             )
@@ -205,6 +238,20 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit) {
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         ActionCard("Scan & fill a form", "Form, Aadhaar, ID card", Modifier.weight(1f)) { scan(ScanMode.FILL) }
                         ActionCard("Batch fill forms", "Many forms → one sheet", Modifier.weight(1f)) { dialog = "batch" }
+                    }
+                }
+                item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        ActionCard("Passport photo", "Face crop, white background", Modifier.weight(1f)) { dialog = "passport" }
+                        ActionCard("Signature cut-out", "See-through signature / seal", Modifier.weight(1f)) { signatureScanner(1) }
+                    }
+                }
+                item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        ActionCard("Resize for portal", "Photo / PDF under X KB", Modifier.weight(1f)) {
+                            resizePicker.launch(arrayOf("image/*", "application/pdf"))
+                        }
+                        ActionCard("Document checklist", "Who has submitted what", Modifier.weight(1f)) { onNavigate("checklist") }
                     }
                 }
                 item {
@@ -366,6 +413,28 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit) {
             text = { Text("They are removed from this app. Files already saved to the phone or Drive stay there.") },
             confirmButton = { TextButton(onClick = { vm.deleteMany(selected); selected = emptyList(); dialog = "" }) { Text("Delete") } },
             dismissButton = { TextButton(onClick = { dialog = "" }) { Text("Cancel") } },
+        )
+        "merit" -> MeritDialog(vm, inFolder, folder, onDismiss = { dialog = "" })
+        "passport" -> AlertDialog(
+            onDismissRequest = { dialog = "" },
+            title = { Text("Passport photo") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Use a clear, front-facing photo in good light.")
+                    Button(onClick = {
+                        dialog = ""
+                        val dir = java.io.File(context.cacheDir, "camera").apply { mkdirs() }
+                        val file = java.io.File(dir, "photo_${System.currentTimeMillis()}.jpg")
+                        val uri = androidx.core.content.FileProvider.getUriForFile(context, context.packageName + ".files", file)
+                        cameraUri = uri
+                        runCatching { camera.launch(uri) }.onFailure { vm.say("Camera not available") }
+                    }, modifier = Modifier.fillMaxWidth()) { Text("Take a photo") }
+                    OutlinedButton(onClick = { dialog = ""; gallery.launch("image/*") }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Choose from gallery")
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { dialog = "" }) { Text("Cancel") } },
         )
         "shareApp" -> AlertDialog(
             onDismissRequest = { dialog = "" },

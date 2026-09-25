@@ -113,20 +113,307 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- New scans ----
 
-    fun saveNewScan(pages: List<Uri>, then: (Scan) -> Unit) = work("Saving scan…") {
+    fun saveNewScan(pages: List<Uri>, sort: Boolean = false, then: (Scan) -> Unit) = work("Saving scan…") {
         val scan = io { repo.create(pages, folder = folderForNew) }
         reload() // the new scan must be in the list before its screen opens
         then(scan)
+        if (sort) autoSortInBackground(scan)
     }
 
     /** Photos / PDFs picked in the app or shared from WhatsApp, Gallery, Files… */
-    fun importUris(uris: List<Uri>, then: (Scan) -> Unit = { _openScan.value = it.id }) = work("Importing…") {
+    fun importUris(uris: List<Uri>, sort: Boolean = true, then: (Scan) -> Unit = { _openScan.value = it.id }) = work("Importing…") {
         val files = io { Images.import(ctx, uris, File(ctx.cacheDir, "import").apply { deleteRecursively() }) }
         if (files.isEmpty()) error("Nothing to import")
         val scan = io { repo.createFromFiles(files, "Imported ${stamp()}", folderForNew) }
         reload()
         then(scan)
+        if (sort) autoSortInBackground(scan)
     }
+
+    // ---- Automatic sorting ----
+
+    private val _autoSort = MutableStateFlow(prefs.getBoolean(KEY_AUTO_SORT, true))
+    val autoSort: StateFlow<Boolean> = _autoSort
+
+    fun setAutoSort(on: Boolean) {
+        _autoSort.value = on
+        prefs.edit().putBoolean(KEY_AUTO_SORT, on).apply()
+    }
+
+    /**
+     * Reads a new scan's text quietly (no progress dialog), works out what it is, and files it:
+     * "Aadhaar card - Ravi Kumar" in "Aadhaar cards". Only scans that aren't in a folder and still
+     * have their default name are touched.
+     */
+    private fun autoSortInBackground(scan: Scan) {
+        if (!_autoSort.value || scan.folder.isNotEmpty()) return
+        viewModelScope.launch {
+            try {
+                val msg = sortOne(scan)
+                reload()
+                if (msg != null) _message.value = msg
+            } catch (e: Exception) {
+                // Sorting is a convenience; a failure just leaves the scan where it is.
+            }
+        }
+    }
+
+    /** Sorts one scan; returns a message, or null if it wasn't recognised. */
+    private suspend fun sortOne(scan: Scan): String? {
+        val s = ocrMissing(scan)
+        val type = DocClassifier.classify(s.text.orEmpty()) ?: return null
+        val person = FormExtractor.extract(s.rows ?: s.text.orEmpty())["name"]
+        val current = io { repo.get(scan.id) } ?: return null
+        if (current.folder.isNotEmpty()) return null
+        io {
+            repo.setFolder(current, type.folder)
+            if (defaultName.matches(current.name)) {
+                repo.rename(repo.get(scan.id)!!, if (person.isNullOrBlank()) "${type.label} ${stamp()}" else "${type.label} - $person")
+            }
+        }
+        return "Sorted as ${type.label} → folder \"${type.folder}\""
+    }
+
+    /** Sorts every scan that isn't in a folder yet. */
+    fun sortUnsorted() = work("Sorting scans…") {
+        val list = _scans.value.filter { it.folder.isEmpty() }
+        if (list.isEmpty()) error("Every scan is already in a folder")
+        var sorted = 0
+        list.forEachIndexed { i, scan ->
+            _busy.value = "Sorting scan ${i + 1} of ${list.size}…"
+            if (sortOne(scan) != null) sorted++
+        }
+        _message.value = "Sorted $sorted of ${list.size} scan(s). The rest weren't recognised and stay under All."
+    }
+
+    // ---- Portal resizer ----
+
+    fun portalExport(scan: Scan, spec: PortalSpec, pageIndex: Int, target: Target) = send(target, "Making it fit ${spec.maxKb} KB…") {
+        val (file, note) = io { Exporter.portalFile(ctx, scan, spec, pageIndex) }
+        note?.let { _message.value = it }
+        listOf(file)
+    }
+
+    // ---- Passport photo ----
+
+    private var passportSource: android.graphics.Bitmap? = null
+    private val _passport = MutableStateFlow<Passport.Result?>(null)
+    val passport: StateFlow<Passport.Result?> = _passport
+
+    fun passportFromUri(uri: Uri, then: () -> Unit) = work("Opening photo…") {
+        passportSource = io { Images.decodeUri(ctx, uri, 2400) }
+        _passport.value = null
+        then()
+    }
+
+    fun passportFromPage(page: File, then: () -> Unit) = work("Opening photo…") {
+        passportSource = io { Images.decode(page, 2400) }
+        _passport.value = null
+        then()
+    }
+
+    fun makePassport(white: Boolean, zoom: Float) = work(if (white) "Finding the face, whitening the background…" else "Finding the face…") {
+        val src = passportSource ?: error("Pick a photo first")
+        val result = Passport.make(src, white, zoom)
+        _passport.value = result
+        if (!result.faceFound) _message.value = "No face found: cropped from the centre. Use a clear, front-facing photo."
+    }
+
+    enum class PassportOutput(val label: String) {
+        PHOTO("Photo (JPG, 35×45 mm)"),
+        PHOTO_50KB("Photo under 50 KB (for portals)"),
+        SHEET_4X6("Print: 4×6 inch sheet, 8 photos"),
+        A4("Print: A4 PDF, 30 photos"),
+    }
+
+    fun exportPassport(output: PassportOutput, target: Target) = send(target, "Making the photo…") {
+        val photo = _passport.value?.photo ?: error("Make the photo first")
+        val dir = File(ctx.cacheDir, "export").apply { deleteRecursively(); mkdirs() }
+        val name = "Passport photo ${stamp()}"
+        io {
+            listOf(
+                when (output) {
+                    PassportOutput.PHOTO -> File(dir, "$name.jpg").apply { writeBytes(Images.encode(photo, 95).jpeg) }
+                    PassportOutput.PHOTO_50KB -> File(dir, "$name.jpg").apply {
+                        writeBytes(SizeFit.fit(50 * 1024, 20 * 1024, allowShrink = false) { _, q -> Images.encode(photo, q).jpeg }.bytes)
+                    }
+                    PassportOutput.SHEET_4X6 -> File(dir, "$name 4x6.jpg").apply {
+                        val sheet = Passport.sheet4x6(photo)
+                        writeBytes(Images.encode(sheet, 95).jpeg)
+                        sheet.recycle()
+                    }
+                    PassportOutput.A4 -> File(dir, "$name A4.pdf").apply { writeBytes(Passport.a4Sheet(photo)) }
+                },
+            )
+        }
+    }
+
+    // ---- Signature / stamp cut-out ----
+
+    private var cutoutSource: android.graphics.Bitmap? = null
+    private val _cutout = MutableStateFlow<android.graphics.Bitmap?>(null)
+    val cutout: StateFlow<android.graphics.Bitmap?> = _cutout
+
+    fun cutoutFromUris(uris: List<Uri>, then: () -> Unit) = work("Opening…") {
+        cutoutSource = io { Images.decodeUri(ctx, uris.first(), 1800) }
+        _cutout.value = null
+        then()
+    }
+
+    fun cutoutFromPage(page: File, then: () -> Unit) = work("Opening…") {
+        cutoutSource = io { Images.decode(page, 1800) }
+        _cutout.value = null
+        then()
+    }
+
+    fun makeCutout(strength: Float, ink: Cutout.Ink) = work("Cutting out…") {
+        val src = cutoutSource ?: error("Scan a signature first")
+        val result = io { Cutout.cut(Images.toCutout(src), strength, ink)?.let(Images::fromCutout) }
+        if (result == null) error("No ink found. Scan the signature on plain white paper.")
+        _cutout.value = result
+    }
+
+    fun exportCutout(png: Boolean, target: Target) = send(target, "Saving…") {
+        val img = _cutout.value ?: error("Nothing cut out yet")
+        val dir = File(ctx.cacheDir, "export").apply { deleteRecursively(); mkdirs() }
+        io {
+            if (png) {
+                listOf(File(dir, "Signature ${stamp()}.png").apply { outputStream().use { img.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) } })
+            } else {
+                // JPG has no transparency: put it on white.
+                val white = android.graphics.Bitmap.createBitmap(img.width, img.height, android.graphics.Bitmap.Config.ARGB_8888)
+                android.graphics.Canvas(white).apply { drawColor(android.graphics.Color.WHITE); drawBitmap(img, 0f, 0f, null) }
+                listOf(File(dir, "Signature ${stamp()}.jpg").apply { writeBytes(Images.encode(white, 95).jpeg) }).also { white.recycle() }
+            }
+        }
+    }
+
+    // ---- College stamp & signature ----
+
+    val branding = Branding(app)
+    private val _brandingVersion = MutableStateFlow(0)
+    val brandingVersion: StateFlow<Int> = _brandingVersion
+
+    fun useCutoutAs(seal: Boolean) = work("Saving…") {
+        val img = _cutout.value ?: error("Nothing cut out yet")
+        io { branding.saveImage(if (seal) branding.sealFile else branding.signatureFile, img) }
+        _brandingVersion.value++
+        _message.value = if (seal) "Saved as the college seal" else "Saved as the principal's signature"
+    }
+
+    fun saveBrandingText(college: String, address: String, signatory: String) {
+        branding.collegeName = college
+        branding.address = address
+        branding.signatory = signatory
+        _brandingVersion.value++
+        _message.value = "Saved"
+    }
+
+    fun removeBrandingImage(seal: Boolean) {
+        (if (seal) branding.sealFile else branding.signatureFile).delete()
+        _brandingVersion.value++
+    }
+
+    // ---- Document checklist ----
+
+    private val checklistRepo = ChecklistRepository(app)
+    private val _checklist = MutableStateFlow(checklistRepo.load())
+    val checklist: StateFlow<ChecklistRepository.Data> = _checklist
+
+    private fun saveChecklist(types: List<String> = _checklist.value.types, students: List<ChecklistStudent>) {
+        val data = ChecklistRepository.Data(types, students)
+        checklistRepo.save(data)
+        _checklist.value = data
+    }
+
+    fun addStudent(name: String, mobile: String, klass: String): String {
+        val id = System.currentTimeMillis().toString()
+        saveChecklist(students = _checklist.value.students + ChecklistStudent(id, name.trim(), mobile.trim(), klass.trim()))
+        _message.value = "${name.trim()} added to the document checklist"
+        return id
+    }
+
+    fun updateStudent(student: ChecklistStudent) =
+        saveChecklist(students = _checklist.value.students.map { if (it.id == student.id) student else it })
+
+    fun deleteStudent(id: String) = saveChecklist(students = _checklist.value.students.filter { it.id != id })
+
+    fun setDoc(studentId: String, type: String, value: String?) {
+        val s = _checklist.value.students.firstOrNull { it.id == studentId } ?: return
+        updateStudent(s.copy(docs = if (value == null) s.docs - type else s.docs + (type to value)))
+    }
+
+    fun setChecklistTypes(types: List<String>) =
+        saveChecklist(types = types.map { it.trim() }.filter { it.isNotEmpty() }.distinct(), students = _checklist.value.students)
+
+    /** Scans one document for a student, names it "<student> - <document>" and ticks it off. */
+    fun scanForStudent(studentId: String, type: String, pages: List<Uri>) = work("Saving…") {
+        val s = _checklist.value.students.firstOrNull { it.id == studentId } ?: error("Student not found")
+        val scan = io { repo.create(pages, "${s.name} - $type", STUDENT_DOCS) }
+        setDoc(studentId, type, scan.id)
+        _message.value = "$type saved for ${s.name}"
+    }
+
+    /** Checklist as a CSV: one row per student, Yes/No per document. */
+    fun exportChecklist(target: Target) = send(target, "Making CSV…") {
+        val data = _checklist.value
+        val ids = _scans.value.map { it.id }.toSet()
+        val sb = StringBuilder()
+        fun cell(v: String) = if (v.any { it == ',' || it == '"' }) "\"" + v.replace("\"", "\"\"") + "\"" else v
+        sb.append((listOf("Name", "Class", "Mobile") + data.types + "Missing").joinToString(",") { cell(it) }).append("\r\n")
+        data.students.sortedBy { it.name.lowercase() }.forEach { s ->
+            val cells = listOf(s.name, s.klass, s.mobile) +
+                data.types.map { if (Checklist.has(s, it, ids)) "Yes" else "No" } +
+                Checklist.missing(s, data.types, ids).size.toString()
+            sb.append(cells.joinToString(",") { cell(it) }).append("\r\n")
+        }
+        val dir = File(ctx.cacheDir, "export").apply { deleteRecursively(); mkdirs() }
+        listOf(File(dir, Exporter.csvName("Document checklist") + ".csv").apply { writeText(sb.toString()) })
+    }
+
+    // ---- Marksheet & merit list ----
+
+    /** Saved marks, or read them from the scan (OCR) with the name and roll number filled in. */
+    fun readMarks(scan: Scan, force: Boolean = false, then: (MarksRecord) -> Unit) = work("Reading the marksheet…") {
+        if (!force) io { repo.loadMarks(scan) }?.let { return@work then(it) }
+        val s = ocrMissing(scan)
+        val rows = s.rows ?: s.text.orEmpty()
+        val found = MarksheetExtractor.extract(rows)
+        val fields = FormExtractor.extract(rows)
+        val saved = io { repo.loadMarks(scan) }
+        then(
+            found.copy(
+                name = saved?.name ?: fields["name"] ?: scan.fields["name"].orEmpty(),
+                roll = saved?.roll ?: fields["roll"] ?: scan.fields["roll"].orEmpty(),
+                category = saved?.category.orEmpty(),
+            ),
+        )
+        if (found.subjects.isEmpty()) _message.value = "No subject marks found. Add them by hand, or rescan more clearly."
+    }
+
+    fun saveMarks(scan: Scan, marks: MarksRecord) = work("Saving…") {
+        io {
+            repo.saveMarks(scan, marks)
+            if (marks.name.isNotBlank() && defaultName.matches(scan.name)) repo.rename(scan, "Marksheet - ${marks.name}")
+        }
+        _message.value = "Marks saved (${Merit.pct(marks.percent)}%)"
+    }
+
+    /** Scans in [scans] with saved marks, ranked. */
+    fun meritEntries(scans: List<Scan>, then: (List<Merit.Ranked>) -> Unit) = work("Collecting marks…") {
+        val entries = io {
+            scans.filter { it.hasMarks }.mapNotNull { s ->
+                repo.loadMarks(s)?.let { m -> Merit.Entry(s.id, m.name.ifBlank { s.name }, m.roll, m.category, m.total, m.maxTotal) }
+            }
+        }
+        then(Merit.rank(entries))
+    }
+
+    fun exportMerit(title: String, ranked: List<Merit.Ranked>, pdf: Boolean, csv: Boolean, target: Target) =
+        send(target, "Making the merit list…") {
+            if (ranked.isEmpty()) error("No saved marksheets here. Open a scanned marksheet and tap Marksheet first.")
+            io { Exporter.meritFiles(ctx, title, ranked, pdf, csv) }
+        }
 
     /**
      * Batch Smart Fill: every [perForm] pages are one form. Each form becomes its own scan in a
@@ -308,5 +595,7 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
 
     private companion object {
         const val KEY_HINDI = "ocr_hindi"
+        const val KEY_AUTO_SORT = "auto_sort"
+        const val STUDENT_DOCS = "Student documents"
     }
 }

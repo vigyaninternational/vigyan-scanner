@@ -36,6 +36,41 @@ object Images {
         }
     }
 
+
+    fun encode(bitmap: Bitmap, quality: Int): PdfWriter.Image {
+        val out = ByteArrayOutputStream()
+        bitmap.compress(Bitmap.CompressFormat.JPEG, quality, out)
+        return PdfWriter.Image(out.toByteArray(), bitmap.width, bitmap.height)
+    }
+
+    /** Black & white (grey) copy: smaller files for documents. */
+    fun grayscale(src: Bitmap): Bitmap {
+        val out = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
+        val paint = android.graphics.Paint().apply {
+            colorFilter = android.graphics.ColorMatrixColorFilter(android.graphics.ColorMatrix().apply { setSaturation(0f) })
+        }
+        android.graphics.Canvas(out).drawBitmap(src, 0f, 0f, paint)
+        return out
+    }
+
+    /** Centre-crops to the shape of [w]x[h] and scales to exactly that many pixels. */
+    fun cropResize(src: Bitmap, w: Int, h: Int): Bitmap {
+        val c = PassportMath.centerCrop(src.width, src.height, w, h)
+        val cropped = Bitmap.createBitmap(src, c[0], c[1], c[2].coerceAtMost(src.width - c[0]), c[3].coerceAtMost(src.height - c[1]))
+        val scaled = Bitmap.createScaledBitmap(cropped, w, h, true)
+        if (cropped !== src && cropped !== scaled) cropped.recycle()
+        return scaled
+    }
+
+    fun toCutout(bitmap: Bitmap): Cutout.Image {
+        val px = IntArray(bitmap.width * bitmap.height)
+        bitmap.getPixels(px, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+        return Cutout.Image(px, bitmap.width, bitmap.height)
+    }
+
+    fun fromCutout(image: Cutout.Image): Bitmap =
+        Bitmap.createBitmap(image.pixels, image.width, image.height, Bitmap.Config.ARGB_8888)
+
     /** Width and height of the image in [file], without loading it. */
     fun size(file: File): Pair<Int, Int> {
         val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -121,7 +156,7 @@ object Images {
         return out
     }
 
-    private fun decodeUri(context: Context, uri: Uri, maxSide: Int): Bitmap {
+    fun decodeUri(context: Context, uri: Uri, maxSide: Int): Bitmap {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             // ImageDecoder also applies the photo's rotation (EXIF).
             val source = ImageDecoder.createSource(context.contentResolver, uri)
