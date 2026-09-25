@@ -81,7 +81,7 @@ fun DetailScreen(
     var attested by rememberSaveable { mutableStateOf(false) }
     var seal by rememberSaveable { mutableStateOf(false) }
     var signature by rememberSaveable { mutableStateOf(false) }
-    var letterhead by rememberSaveable { mutableStateOf(false) }
+    var letterPad by rememberSaveable { mutableStateOf(false) }
     var pageToDelete by rememberSaveable { mutableStateOf(-1) }
 
     var pdf by rememberSaveable { mutableStateOf(true) }
@@ -211,7 +211,7 @@ fun DetailScreen(
                         if (idCard) {
                             Text("Not used with the ID card layout.", style = MaterialTheme.typography.bodySmall)
                         } else {
-                            CheckRow("On college letterhead", letterhead) { letterhead = it }
+                            CheckRow("Space for letter pad: blank space at top and bottom (A4)", letterPad) { letterPad = it }
                             CheckRow("\"ATTESTED - TRUE COPY\" stamp with date", attested) { attested = it }
                             CheckRow(if (hasSig) "Principal's signature" else "Principal's signature (not set up yet)", signature && hasSig) {
                                 if (hasSig) signature = it else onTool("branding")
@@ -243,7 +243,7 @@ fun DetailScreen(
                                 attested = attested,
                                 seal = seal && vm.branding.hasSeal(),
                                 signature = signature && vm.branding.hasSignature(),
-                                letterhead = letterhead,
+                                letterPad = letterPad,
                             )
                             vm.export(scan, options, target)
                         }

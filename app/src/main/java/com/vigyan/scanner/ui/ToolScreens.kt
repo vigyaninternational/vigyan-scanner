@@ -201,18 +201,16 @@ fun BrandingScreen(vm: ScanViewModel, onBack: () -> Unit, onScanCutout: () -> Un
     val version by vm.brandingVersion.collectAsStateWithLifecycle()
     val b = vm.branding
     var college by rememberSaveable { mutableStateOf(b.collegeName) }
-    var address by rememberSaveable { mutableStateOf(b.address) }
     var signatory by rememberSaveable { mutableStateOf(b.signatory) }
 
     ToolScaffold("College stamp & signature", onBack) {
         Text(
-            "Used by the stamp options when you save a scan: letterhead, \"ATTESTED - TRUE COPY\", college seal and principal's signature.",
+            "Used by the stamp options when you save a scan: \"ATTESTED - TRUE COPY\", college seal and principal's signature. For the letter pad, tick \"Space for letter pad\" when saving.",
             style = MaterialTheme.typography.bodyMedium,
         )
-        OutlinedTextField(college, { college = it }, label = { Text("College name (letterhead)") }, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(address, { address = it }, label = { Text("Address line (letterhead)") }, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(college, { college = it }, label = { Text("College name (on stamps and merit lists)") }, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(signatory, { signatory = it }, label = { Text("Signs as (e.g. Principal)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        Button(onClick = { vm.saveBrandingText(college, address, signatory) }, modifier = Modifier.fillMaxWidth()) { Text("Save") }
+        Button(onClick = { vm.saveBrandingText(college, signatory) }, modifier = Modifier.fillMaxWidth()) { Text("Save") }
 
         listOf(false to "Principal's signature", true to "College seal").forEach { (seal, label) ->
             val file = if (seal) b.sealFile else b.signatureFile

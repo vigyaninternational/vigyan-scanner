@@ -14,7 +14,7 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * The college's own marks for documents: a letterhead band, an "ATTESTED / TRUE COPY" stamp, the
+ * The college's own marks for documents: an "ATTESTED / TRUE COPY" stamp, the
  * college seal and the principal's signature. The seal and signature are transparent PNGs made
  * with the signature cut-out tool; the text is set in College stamp & signature.
  */
@@ -29,10 +29,6 @@ class Branding(private val context: Context) {
     var collegeName: String
         get() = prefs.getString("college", null) ?: "VIGYAN INTERNATIONAL JUNIOR COLLEGE"
         set(v) = prefs.edit().putString("college", v.trim()).apply()
-
-    var address: String
-        get() = prefs.getString("address", null) ?: "Koraput, Odisha"
-        set(v) = prefs.edit().putString("address", v.trim()).apply()
 
     var signatory: String
         get() = prefs.getString("signatory", null) ?: "Principal"
@@ -116,37 +112,4 @@ class Branding(private val context: Context) {
         return out
     }
 
-    /** Letterhead band [width] pixels wide: logo, college name and address, and a rule below. */
-    fun header(width: Int): Bitmap {
-        val h = (width * 0.15f).toInt()
-        val bmp = Bitmap.createBitmap(width, h, Bitmap.Config.ARGB_8888)
-        val c = Canvas(bmp)
-        c.drawColor(Color.WHITE)
-        val pad = width * 0.04f
-        val logoSize = h * 0.8f
-        BitmapFactory.decodeResource(context.resources, R.drawable.logo_vigyan)?.let { logo ->
-            val k = logoSize / maxOf(logo.width, logo.height)
-            val lw = logo.width * k
-            val lh = logo.height * k
-            c.drawBitmap(logo, null, RectF(pad, (h - lh) / 2, pad + lw, (h + lh) / 2), Paint(Paint.FILTER_BITMAP_FLAG))
-            logo.recycle()
-        }
-        val textLeft = pad + logoSize + width * 0.025f
-        val available = width - textLeft - pad
-        val cx = textLeft + available / 2
-        val name = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.rgb(20, 60, 30); typeface = Typeface.DEFAULT_BOLD; textAlign = Paint.Align.CENTER
-            textSize = width * 0.042f
-            while (measureText(collegeName) > available && textSize > 10f) textSize *= 0.95f
-        }
-        c.drawText(collegeName, cx, h * 0.48f, name)
-        val addr = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.rgb(60, 60, 60); textAlign = Paint.Align.CENTER; textSize = width * 0.022f
-            while (measureText(address) > available && textSize > 8f) textSize *= 0.95f
-        }
-        c.drawText(address, cx, h * 0.72f, addr)
-        val rule = Paint().apply { color = Color.rgb(200, 30, 120); strokeWidth = h * 0.03f }
-        c.drawLine(pad, h * 0.93f, width - pad, h * 0.93f, rule)
-        return bmp
-    }
 }

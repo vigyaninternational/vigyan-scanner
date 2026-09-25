@@ -301,9 +301,8 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
         _message.value = if (seal) "Saved as the college seal" else "Saved as the principal's signature"
     }
 
-    fun saveBrandingText(college: String, address: String, signatory: String) {
+    fun saveBrandingText(college: String, signatory: String) {
         branding.collegeName = college
-        branding.address = address
         branding.signatory = signatory
         _brandingVersion.value++
         _message.value = "Saved"

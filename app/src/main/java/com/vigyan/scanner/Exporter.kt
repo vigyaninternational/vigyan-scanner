@@ -41,10 +41,10 @@ data class ExportOptions(
     val seal: Boolean = false,
     /** Principal's signature (made with the signature cut-out tool). */
     val signature: Boolean = false,
-    /** College letterhead band above every page. */
-    val letterhead: Boolean = false,
+    /** Blank space at the top and bottom of an A4 page, to print on the college letter pad. */
+    val letterPad: Boolean = false,
 ) {
-    val decorated get() = !idCard && (attested || seal || signature || letterhead)
+    val decorated get() = !idCard && (attested || seal || signature || letterPad)
 }
 
 /** Turns a scan into files and sends them to phone storage, Google Drive, or any app. */
@@ -81,7 +81,7 @@ object Exporter {
                 val name = if (scan.pages.size == 1) "$base.jpg" else "${base}_page${i + 1}.jpg"
                 val dest = File(dir, name)
                 when {
-                    options.decorated -> dest.writeBytes(decoratedJpeg(page, options, branding, withHeader = true).jpeg)
+                    options.decorated -> dest.writeBytes(decoratedJpeg(page, options, branding, withPad = true).jpeg)
                     options.quality == Quality.HIGH -> page.copyTo(dest, overwrite = true)
                     else -> dest.writeBytes(Images.jpeg(page, options.quality).jpeg)
                 }
@@ -101,22 +101,37 @@ object Exporter {
     private const val CARD_LONG = 243f
     private const val CARD_SHORT = 153f
 
-    /** A page with the chosen stamps drawn on it (and, for JPG files, the letterhead on top). */
-    private fun decoratedJpeg(file: File, options: ExportOptions, branding: Branding, withHeader: Boolean): PdfWriter.Image {
+    // Letter pad: blank space so the page prints inside the college letter pad's printed header
+    // and footer. The page is A4.
+    private const val PAD_TOP = 113f // 40 mm
+    private const val PAD_BOTTOM = 71f // 25 mm
+    private const val PAD_SIDE = 34f // 12 mm
+
+    /** Where the scan goes on an A4 letter-pad page: [x, y, w, h] in points, fitted inside the margins. */
+    private fun padBox(imgW: Int, imgH: Int): FloatArray {
+        val boxW = A4_W - 2 * PAD_SIDE
+        val boxH = A4_H - PAD_TOP - PAD_BOTTOM
+        val s = minOf(boxW / imgW, boxH / imgH)
+        val w = imgW * s
+        val h = imgH * s
+        return floatArrayOf((A4_W - w) / 2, PAD_TOP, w, h)
+    }
+
+    /** A page with the chosen stamps drawn on it (and, for JPG files, placed on a blank A4 letter-pad page). */
+    private fun decoratedJpeg(file: File, options: ExportOptions, branding: Branding, withPad: Boolean): PdfWriter.Image {
         val page = Images.decode(file, options.quality.maxSide)
         val stamped = branding.stamp(page, options.attested, options.seal, options.signature)
         if (stamped !== page) page.recycle()
-        val result = if (withHeader && options.letterhead) {
-            val header = branding.header(stamped.width)
-            val combined = Bitmap.createBitmap(stamped.width, header.height + stamped.height, Bitmap.Config.ARGB_8888)
-            Canvas(combined).apply {
+        val result = if (withPad && options.letterPad) {
+            val box = padBox(stamped.width, stamped.height)
+            val k = stamped.width / box[2] // pixels per point
+            val sheet = Bitmap.createBitmap((A4_W * k).toInt(), (A4_H * k).toInt(), Bitmap.Config.ARGB_8888)
+            Canvas(sheet).apply {
                 drawColor(Color.WHITE)
-                drawBitmap(header, 0f, 0f, null)
-                drawBitmap(stamped, 0f, header.height.toFloat(), null)
+                drawBitmap(stamped, box[0] * k, box[1] * k, null)
             }
-            header.recycle()
             stamped.recycle()
-            combined
+            sheet
         } else {
             stamped
         }
@@ -130,21 +145,17 @@ object Exporter {
             else PdfWriter.Placement(image, x, y, w, h)
         }
         if (!options.idCard) {
-            // The letterhead is its own image above the page, so the page's text layer stays in place.
-            val header = if (options.letterhead) {
-                val bmp = branding.header(1240)
-                Images.encode(bmp, 85).also { bmp.recycle() }
-            } else null
-            val headerH = header?.let { A4_W * it.pixelHeight / it.pixelWidth } ?: 0f
-            // One PDF page per scanned page, A4 width, same shape as the scan.
             return pages.mapIndexed { i, file ->
-                val image = if (options.decorated) decoratedJpeg(file, options, branding, withHeader = false) else Images.jpeg(file, options.quality)
-                val h = A4_W * image.pixelHeight / image.pixelWidth
-                val placements = listOfNotNull(
-                    header?.let { PdfWriter.Placement(it, 0f, 0f, A4_W, headerH) },
-                    placement(i, 0f, headerH, A4_W, h, image),
-                )
-                PdfWriter.Page(A4_W, headerH + h, placements)
+                val image = if (options.decorated) decoratedJpeg(file, options, branding, withPad = false) else Images.jpeg(file, options.quality)
+                if (options.letterPad) {
+                    // A4 with blank space at the top and bottom, to print on the college letter pad.
+                    val b = padBox(image.pixelWidth, image.pixelHeight)
+                    PdfWriter.Page(A4_W, A4_H, listOf(placement(i, b[0], b[1], b[2], b[3], image)))
+                } else {
+                    // One PDF page per scanned page, A4 width, same shape as the scan.
+                    val h = A4_W * image.pixelHeight / image.pixelWidth
+                    PdfWriter.Page(A4_W, h, listOf(placement(i, 0f, 0f, A4_W, h, image)))
+                }
             }
         }
         // ID card: every page shrunk to real card size on A4 sheets, one column for a front and
