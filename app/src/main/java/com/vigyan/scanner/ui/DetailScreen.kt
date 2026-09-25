@@ -127,6 +127,7 @@ fun DetailScreen(
                         Row {
                             SmallButton("◀", enabled = i > 0) { vm.movePage(scan, i, i - 1) }
                             SmallButton("⟳") { vm.rotatePage(scan, i) }
+                            SmallButton("⛶") { onTool("crop/${scan.id}/$i") }
                             SmallButton("✏") { onTool("annotate/${scan.id}/$i") }
                             SmallButton("✕", enabled = scan.pages.size > 1) { pageToDelete = i; dialog = "deletePage" }
                             SmallButton("▶", enabled = i < scan.pages.size - 1) { vm.movePage(scan, i, i + 1) }
@@ -135,7 +136,7 @@ fun DetailScreen(
                 }
             }
             Text(
-                "◀ ▶ move a page · ⟳ turn it · ✏ write, highlight or sign on it · ✕ delete it",
+                "◀ ▶ move · ⟳ turn · ⛶ adjust corners / straighten · ✏ write, highlight or sign · ✕ delete",
                 style = MaterialTheme.typography.bodySmall,
             )
 

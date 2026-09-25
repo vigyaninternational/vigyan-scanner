@@ -227,8 +227,8 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
     // ---- Writing on a page ----
 
     /** Saves a page after drawing / writing on it (the untouched original is kept for Undo). */
-    fun savePageEdit(scan: Scan, index: Int, edited: android.graphics.Bitmap, then: () -> Unit) = work("Saving the page…") {
-        io { repo.replacePage(scan, index, edited) }
+    fun savePageEdit(scan: Scan, index: Int, edited: android.graphics.Bitmap, reshaped: Boolean = false, then: () -> Unit) = work("Saving the page…") {
+        io { repo.replacePage(scan, index, edited, reshaped) }
         _message.value = "Page saved"
         then()
     }

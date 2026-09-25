@@ -42,6 +42,7 @@ import com.vigyan.scanner.ui.AppLockScreen
 import com.vigyan.scanner.ui.BackupScreen
 import com.vigyan.scanner.ui.LockScreen
 import com.vigyan.scanner.ui.QuickScanScreen
+import com.vigyan.scanner.ui.CropScreen
 import com.vigyan.scanner.ui.fingerprintAvailable
 import com.vigyan.scanner.ui.BrandingScreen
 import com.vigyan.scanner.ui.ChecklistScreen
@@ -284,6 +285,11 @@ class MainActivity : FragmentActivity() {
                         }
                     },
                 )
+            }
+            composable("crop/{id}/{page}") { entry ->
+                scans.firstOrNull { it.id == entry.arguments?.getString("id") }?.let { scan ->
+                    CropScreen(vm, scan, entry.arguments?.getString("page")?.toIntOrNull() ?: 0, onBack = { nav.popBackStack() })
+                }
             }
             composable("backup") { BackupScreen(vm, onBack = { nav.popBackStack() }) }
             composable("applock") { AppLockScreen(onBack = { nav.popBackStack() }, say = vm::say) }

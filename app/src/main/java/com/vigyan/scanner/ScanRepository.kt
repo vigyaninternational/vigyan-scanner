@@ -109,11 +109,13 @@ class ScanRepository(private val context: Context) {
      * Replaces a page's picture after writing on it. The very first original is kept beside it
      * (for "Undo all changes"). The page keeps its shape, so its OCR text still lines up.
      */
-    fun replacePage(scan: Scan, index: Int, bitmap: android.graphics.Bitmap) {
+    fun replacePage(scan: Scan, index: Int, bitmap: android.graphics.Bitmap, reshaped: Boolean = false) {
         val page = scan.pages[index]
         val orig = originalOf(page)
         if (!orig.exists()) page.copyTo(orig)
         Images.save(bitmap, page, 92)
+        // Cropped or straightened: the old text positions no longer fit, so the text is read again when needed.
+        if (reshaped) ocrFile(page).delete()
         setPages(scan, scan.pages)
     }
 
@@ -123,6 +125,7 @@ class ScanRepository(private val context: Context) {
         if (orig.exists()) {
             orig.copyTo(page, overwrite = true)
             orig.delete()
+            ocrFile(page).delete()
         }
         setPages(scan, scan.pages)
     }

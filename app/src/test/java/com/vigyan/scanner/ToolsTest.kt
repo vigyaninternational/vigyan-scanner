@@ -242,3 +242,74 @@ class QuickScanLogicTest {
         assertEquals(190, white)
     }
 }
+
+class DocDetectTest {
+    private val w = 256
+    private val h = 200
+    // A tilted page, seen slightly at an angle.
+    private val corners = floatArrayOf(40f, 30f, 200f, 45f, 185f, 170f, 25f, 155f)
+
+    private fun inside(x: Float, y: Float): Boolean {
+        var sign = 0
+        for (i in 0 until 4) {
+            val j = (i + 1) % 4
+            val cross = (corners[j * 2] - corners[i * 2]) * (y - corners[i * 2 + 1]) - (corners[j * 2 + 1] - corners[i * 2 + 1]) * (x - corners[i * 2])
+            val s = if (cross >= 0) 1 else -1
+            if (sign == 0) sign = s else if (s != sign) return false
+        }
+        return true
+    }
+
+    private fun scene(tableLum: Int, tableSat: Int): Pair<IntArray, IntArray> {
+        val lum = IntArray(w * h)
+        val sat = IntArray(w * h)
+        for (y in 0 until h) for (x in 0 until w) {
+            val p = y * w + x
+            if (inside(x.toFloat(), y.toFloat())) {
+                // Paper with lines of text on it.
+                lum[p] = if (y % 12 == 0 && x % 5 != 0) 50 else 225
+                sat[p] = 8
+            } else {
+                lum[p] = tableLum
+                sat[p] = tableSat
+            }
+        }
+        return lum to sat
+    }
+
+    private fun assertCorners(q: FloatArray?) {
+        requireNotNull(q) { "page not found" }
+        for (i in 0 until 8) assertEquals("value $i", corners[i].toDouble(), q[i].toDouble(), 4.0)
+    }
+
+    @Test
+    fun tiltedPageOnDarkTable() {
+        val (lum, sat) = scene(tableLum = 45, tableSat = 5)
+        assertCorners(DocDetect.findQuad(lum, sat, w, h))
+    }
+
+    @Test
+    fun pageOnBrownWoodenTable() {
+        // The table is nearly as bright as the paper but brown (colourful).
+        val (lum, sat) = scene(tableLum = 175, tableSat = 110)
+        assertCorners(DocDetect.findQuad(lum, sat, w, h))
+    }
+
+    @Test
+    fun pageFillingThePhotoIsLeftAlone() {
+        val lum = IntArray(w * h) { if (it % 97 == 0) 40 else 225 }
+        assertNull(DocDetect.findQuad(lum, null, w, h))
+    }
+
+    @Test
+    fun noPage() {
+        assertNull(DocDetect.findQuad(IntArray(w * h) { 100 }, null, w, h))
+    }
+
+    @Test
+    fun straightenedSize() {
+        val (width, height) = DocDetect.outputSize(floatArrayOf(0f, 0f, 100f, 0f, 100f, 140f, 0f, 140f))
+        assertEquals(100f, width)
+        assertEquals(140f, height)
+    }
+}

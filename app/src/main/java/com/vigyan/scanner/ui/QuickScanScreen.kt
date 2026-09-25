@@ -12,6 +12,7 @@ import androidx.camera.view.CameraController
 import androidx.camera.view.LifecycleCameraController
 import androidx.camera.view.PreviewView
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -40,6 +41,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -51,6 +53,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -60,6 +64,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import coil.compose.AsyncImage
+import com.vigyan.scanner.DocDetect
 import com.vigyan.scanner.QuickScan
 import com.vigyan.scanner.QuickScanLogic
 import com.vigyan.scanner.VolumeKeys
@@ -105,6 +110,8 @@ fun QuickScanScreen(onCancel: () -> Unit, onDone: (List<File>) -> Unit) {
     val sound = remember { MediaActionSound() }
     val shutter = remember { QuickScanLogic.AutoShutter() }
     var counter by remember { mutableIntStateOf(0) }
+    var liveQuad by remember { mutableStateOf<FloatArray?>(null) }
+    var liveAspect by remember { mutableFloatStateOf(0.75f) }
 
     val controller = remember {
         LifecycleCameraController(context).apply {
@@ -164,10 +171,45 @@ fun QuickScanScreen(onCancel: () -> Unit, onDone: (List<File>) -> Unit) {
         controller.bindToLifecycle(lifecycleOwner)
         val analysis = Executors.newSingleThreadExecutor()
         var previous: IntArray? = null
+        var frame = 0
         controller.setImageAnalysisAnalyzer(analysis) { image ->
             try {
                 val plane = image.planes[0]
                 val buf = plane.buffer
+
+                // Every few frames: find the page's edges for the green outline.
+                if (frame++ % 3 == 0) {
+                    val dw = 128
+                    val dh = (128 * image.height / image.width).coerceAtLeast(1)
+                    val lum = IntArray(dw * dh) { i ->
+                        val x = (i % dw) * image.width / dw
+                        val y = (i / dw) * image.height / dh
+                        buf.get(y * plane.rowStride + x * plane.pixelStride).toInt() and 0xFF
+                    }
+                    val rot = image.imageInfo.rotationDegrees
+                    val q = DocDetect.findQuad(lum, null, dw, dh)?.let { raw ->
+                        // To 0..1 in the upright picture the user sees.
+                        FloatArray(8) { 0f }.also { out ->
+                            for (k in 0 until 4) {
+                                val u = raw[k * 2] / dw
+                                val v = raw[k * 2 + 1] / dh
+                                val (ux, uy) = when (rot) {
+                                    90 -> (1 - v) to u
+                                    180 -> (1 - u) to (1 - v)
+                                    270 -> v to (1 - u)
+                                    else -> u to v
+                                }
+                                out[k * 2] = ux
+                                out[k * 2 + 1] = uy
+                            }
+                        }
+                    }
+                    val aspect = if (rot % 180 == 0) image.width.toFloat() / image.height else image.height.toFloat() / image.width
+                    ContextCompat.getMainExecutor(context).execute {
+                        liveQuad = q
+                        liveAspect = aspect
+                    }
+                }
                 val gw = 32
                 val gh = 24
                 val grid = IntArray(gw * gh) { i ->
@@ -215,6 +257,22 @@ fun QuickScanScreen(onCancel: () -> Unit, onDone: (List<File>) -> Unit) {
                 factory = { ctx -> PreviewView(ctx).apply { this.controller = controller; scaleType = PreviewView.ScaleType.FIT_CENTER } },
                 modifier = Modifier.fillMaxSize(),
             )
+        }
+        // Green outline where the page's edges were found (the preview is fitted, so map into its area).
+        liveQuad?.let { q ->
+            Canvas(Modifier.fillMaxSize()) {
+                val viewAspect = size.width / size.height
+                val (dw, dh) = if (viewAspect > liveAspect) size.height * liveAspect to size.height else size.width to size.width / liveAspect
+                val left = (size.width - dw) / 2
+                val top = (size.height - dh) / 2
+                val path = Path().apply {
+                    moveTo(left + q[0] * dw, top + q[1] * dh)
+                    for (k in 1 until 4) lineTo(left + q[k * 2] * dw, top + q[k * 2 + 1] * dh)
+                    close()
+                }
+                drawPath(path, Color(0x3300E676))
+                drawPath(path, Color(0xFF00E676), style = Stroke(width = 3.dp.toPx()))
+            }
         }
         Box(Modifier.fillMaxSize().alpha(flashAlpha).background(Color.White))
 
