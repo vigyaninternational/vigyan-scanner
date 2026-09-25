@@ -1,0 +1,6 @@
+<resources>
+    <style name="Theme.VigyanScanner" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">#1E4FA3</item>
+        <item name="android:windowBackground">@android:color/white</item>
+    </style>
+</resources>

@@ -1,0 +1,18 @@
+# Normalize line endings on commit; check out native on each OS
+* text=auto
+
+# Scripts that must stay LF regardless of platform
+gradlew        text eol=lf
+*.sh           text eol=lf
+
+# Windows scripts stay CRLF
+*.bat          text eol=crlf
+
+# Binary files Git must never touch
+*.png          binary
+*.jpg          binary
+*.jpeg         binary
+*.webp         binary
+*.keystore     binary
+*.jks          binary
+*.jar          binary

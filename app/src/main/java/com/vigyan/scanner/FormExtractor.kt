@@ -1,0 +1,227 @@
+package com.vigyan.scanner
+
+import java.util.Calendar
+
+/**
+ * "Scan to fill": picks form fields (name, father's name, date of birth, mobile, Aadhaar …) out of
+ * OCR text. It looks for printed labels first ("Name :", "D.O.B", "Mobile No."), then falls back to
+ * patterns (a 10-digit mobile, an email, a 12-digit Aadhaar number, an Aadhaar-card layout).
+ * The user always checks and edits the result before saving it.
+ *
+ * Pure Kotlin (no Android), so it is covered by plain unit tests.
+ */
+object FormExtractor {
+
+    /** [csvHeader] matches the Vigyan ERP student CSV import where a column exists there. */
+    data class Field(val key: String, val label: String, val csvHeader: String, val multiLine: Boolean = false)
+
+    val FIELDS = listOf(
+        Field("name", "Name", "StudentName"),
+        Field("father", "Father's / Guardian's name", "FatherName"),
+        Field("mother", "Mother's name", "MotherName"),
+        Field("dob", "Date of birth (dd/mm/yyyy)", "DOB(yyyy-MM-dd)"),
+        Field("gender", "Gender", "Gender(MALE/FEMALE/OTHER)"),
+        Field("mobile1", "Mobile", "MobileNo1"),
+        Field("mobile2", "Other mobile", "MobileNo2"),
+        Field("email", "Email", "Email"),
+        Field("aadhaar", "Aadhaar no.", "AadhaarNo"),
+        Field("roll", "Roll no.", "RollNo"),
+        Field("admission", "Admission / Registration no.", "AdmissionNo"),
+        Field("address", "Address", "Address", multiLine = true),
+        Field("pin", "PIN code", "PinCode"),
+    )
+
+    private const val OPT_NO = """(?:\s*(?:no|number|num|code)\b\.?)?"""
+
+    // "Father's occupation", "Mother tongue", "Father's mobile": not a name (the mobile label still counts).
+    private const val NOT_A_NAME = """(?!['’]?s?\s*(?:tongue|occupation|profession|income|qualification|mobile|phone|contact|e-?mail|address|signature|annual))"""
+
+    /** Label patterns per field. Order matters only for ties; contained matches are dropped. */
+    private val LABELS: List<Pair<String, Regex>> = listOf(
+        "father" to """father['’]?s?\s*/?\s*(?:guardian['’]?s?)?\s*name|name\s*of\s*(?:the\s*)?(?:father|guardian)|father['’]?s?$NOT_A_NAME|guardian['’]?s?\s*name|guardian['’]?s?$NOT_A_NAME|\bs\s*/\s*o\b|\bd\s*/\s*o\b|\bc\s*/\s*o\b""",
+        "mother" to """mother['’]?s?\s*name|name\s*of\s*(?:the\s*)?mother|mother['’]?s?$NOT_A_NAME""",
+        "name" to """(?:student['’]?s?|candidate['’]?s?|applicant['’]?s?|full)\s*name|name\s*of\s*(?:the\s*)?(?:student|candidate|applicant)|name""",
+        "dob" to """date\s*of\s*birth|birth\s*date|d\s*\.?\s*o\s*\.?\s*b\b\.?|year\s*of\s*birth""",
+        "gender" to """gender|sex""",
+        "mobile" to """mobile$OPT_NO|mob\b\.?$OPT_NO|phone$OPT_NO|contact$OPT_NO|whats\s*app$OPT_NO""",
+        "email" to """e\s*-?\s*mail(?:\s*id|\s*address)?""",
+        "aadhaar" to """aadha+r$OPT_NO|uid$OPT_NO""",
+        "roll" to """roll$OPT_NO""",
+        "admission" to """admission$OPT_NO|reg(?:istration|d)?\.?\s*(?:no|number)\b\.?|enrol+ment$OPT_NO""",
+        "address" to """(?:permanent|present|residential|correspondence|postal)?\s*address""",
+        "pin" to """pin\s*code|pin\b|postal\s*code""",
+    ).map { (k, p) -> k to Regex("""(?<![a-z])(?:$p)(?![a-z])""", RegexOption.IGNORE_CASE) }
+
+    private val MOBILE = Regex("""(?<!\d)(?:\+?91[\s-]?|0)?([6-9]\d{4}[\s-]?\d{5})(?!\d)""")
+    private val EMAIL = Regex("""[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}""")
+    private val AADHAAR = Regex("""(?<!\d)([2-9]\d{3})[\s-]?(\d{4})[\s-]?(\d{4})(?!\d)""")
+    private val PIN = Regex("""(?<!\d)([1-9]\d{2})\s?(\d{3})(?!\d)""")
+    private val GENDER_WORD = Regex("""(?<![a-z])(female|male|transgender)(?![a-z])""", RegexOption.IGNORE_CASE)
+    private const val NOT_PERSON_WORDS = "school|college|institut|board|bank|branch|exam|course|subject|university|village|district|company"
+    private val NOT_PERSON = Regex(NOT_PERSON_WORDS, RegexOption.IGNORE_CASE)
+    private val NAME_OF_THING = Regex("""^\s*of\s+(?:the\s+)?(?:$NOT_PERSON_WORDS)""", RegexOption.IGNORE_CASE)
+    private val GAP = Regex("""\s{3,}""")
+    private val LEAD = Regex("""^[\s:;.\-–—=|>)]+""")
+
+    private val MONTHS = listOf("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")
+
+    private class Hit(val field: String, val start: Int, val end: Int)
+
+    fun extract(text: String): Map<String, String> {
+        val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("--- Page") }
+        val hitsPerLine = lines.map { labelHits(it) }
+        val raw = mutableMapOf<String, MutableList<String>>()
+
+        lines.forEachIndexed { i, line ->
+            val hits = hitsPerLine[i]
+            hits.forEachIndexed { h, hit ->
+                val stop = if (h + 1 < hits.size) hits[h + 1].start else line.length
+                var value = line.substring(hit.end, stop).replace(LEAD, "").trim()
+                // "Name :" on one line and the value on the next.
+                if (value.isEmpty() && i + 1 < lines.size && hitsPerLine[i + 1].isEmpty()) value = lines[i + 1]
+                if (hit.field == "address") {
+                    // An address usually runs over the next line or two.
+                    var j = i + 1
+                    if (value == lines.getOrNull(i + 1)) j++
+                    while (j < lines.size && j <= i + 3 && hitsPerLine[j].isEmpty() && value.length < 160) {
+                        value += ", " + lines[j]
+                        j++
+                    }
+                }
+                if (value.isNotEmpty()) raw.getOrPut(hit.field) { mutableListOf() } += value
+            }
+        }
+
+        val out = linkedMapOf<String, String>()
+        fun first(field: String, clean: (String) -> String?) {
+            raw[field].orEmpty().firstNotNullOfOrNull { v -> clean(v)?.takeIf { it.isNotBlank() } }?.let { out[field] = it }
+        }
+        first("name", ::cleanName)
+        first("father", ::cleanName)
+        first("mother", ::cleanName)
+        first("dob") { normalizeDate(it) ?: Regex("""(?<!\d)(19|20)\d{2}(?!\d)""").find(it)?.value }
+        first("gender", ::cleanGender)
+        first("email") { EMAIL.find(it)?.value }
+        first("aadhaar") { v -> AADHAAR.find(v)?.let { "${it.groupValues[1]} ${it.groupValues[2]} ${it.groupValues[3]}" } }
+        first("roll", ::cleanId)
+        first("admission", ::cleanId)
+        first("address") { v -> v.replace(GAP, ", ").trim(' ', ',').takeIf { it.length >= 4 } }
+        first("pin") { v -> PIN.find(v)?.let { it.groupValues[1] + it.groupValues[2] } }
+
+        // Mobiles: labelled ones first, then any other Indian mobile number in the text.
+        val mobiles = LinkedHashSet<String>()
+        raw["mobile"].orEmpty().forEach { v -> MOBILE.findAll(v).forEach { mobiles += digits(it.groupValues[1]) } }
+        MOBILE.findAll(text).forEach { m ->
+            val d = digits(m.groupValues[1])
+            // Skip a 10-digit run that is really part of a 12-digit Aadhaar number.
+            if (AADHAAR.findAll(text).none { a -> m.range.first >= a.range.first && m.range.last <= a.range.last }) mobiles += d
+        }
+        mobiles.elementAtOrNull(0)?.let { out["mobile1"] = it }
+        mobiles.elementAtOrNull(1)?.let { out["mobile2"] = it }
+
+        // Pattern fallbacks for fields with no label.
+        if ("email" !in out) EMAIL.find(text)?.let { out["email"] = it.value }
+        if ("aadhaar" !in out) {
+            AADHAAR.findAll(text).firstOrNull { it.value.contains(Regex("""\d{4}[\s-]\d{4}[\s-]\d{4}""")) }
+                ?.let { out["aadhaar"] = "${it.groupValues[1]} ${it.groupValues[2]} ${it.groupValues[3]}" }
+        }
+        if ("gender" !in out) GENDER_WORD.find(text)?.let { out["gender"] = cleanGender(it.value)!! }
+        if ("pin" !in out) out["address"]?.let { a -> PIN.findAll(a).lastOrNull()?.let { out["pin"] = it.groupValues[1] + it.groupValues[2] } }
+
+        // Aadhaar-card layout: the holder's name is the line just above the DOB line.
+        if ("name" !in out) {
+            val dobLine = lines.indices.indexOfFirst { i -> hitsPerLine[i].any { it.field == "dob" } }
+            if (dobLine > 0) {
+                (dobLine - 1 downTo maxOf(0, dobLine - 3)).map { lines[it] }
+                    .firstOrNull { looksLikePersonName(it) }
+                    ?.let { out["name"] = cleanName(it)!! }
+            }
+        }
+
+        return FIELDS.mapNotNull { f -> out[f.key]?.let { f.key to it } }.toMap()
+    }
+
+    /** Converts a dd/mm/yyyy date to yyyy-MM-dd for the ERP CSV; blank if it isn't a full date. */
+    fun toIsoDate(display: String): String {
+        val m = Regex("""^(\d{2})/(\d{2})/(\d{4})$""").find(display.trim()) ?: return ""
+        return "${m.groupValues[3]}-${m.groupValues[2]}-${m.groupValues[1]}"
+    }
+
+    /** Finds a date in [s] and returns it as dd/mm/yyyy, or null. */
+    fun normalizeDate(s: String): String? {
+        Regex("""(?<!\d)(\d{4})[/.\-](\d{1,2})[/.\-](\d{1,2})(?!\d)""").find(s)?.let { m ->
+            return build(m.groupValues[3].toInt(), m.groupValues[2].toInt(), m.groupValues[1].toInt())
+        }
+        Regex("""(?<!\d)(\d{1,2})\s*[/.\-]\s*(\d{1,2})\s*[/.\-]\s*(\d{4}|\d{2})(?!\d)""").find(s)?.let { m ->
+            return build(m.groupValues[1].toInt(), m.groupValues[2].toInt(), year(m.groupValues[3]))
+        }
+        Regex("""(?<!\d)(\d{1,2})(?:st|nd|rd|th)?[\s\-/.,]*([A-Za-z]{3,9})[\s\-/.,]*(\d{4})(?!\d)""").find(s)?.let { m ->
+            val month = MONTHS.indexOf(m.groupValues[2].take(3).lowercase()) + 1
+            if (month > 0) return build(m.groupValues[1].toInt(), month, m.groupValues[3].toInt())
+        }
+        return null
+    }
+
+    private fun build(d: Int, m: Int, y: Int): String? {
+        if (d !in 1..31 || m !in 1..12 || y !in 1900..2100) return null
+        return "%02d/%02d/%04d".format(d, m, y)
+    }
+
+    private fun year(y: String): Int {
+        if (y.length == 4) return y.toInt()
+        val nowYY = Calendar.getInstance().get(Calendar.YEAR) % 100
+        val v = y.toInt()
+        return if (v > nowYY) 1900 + v else 2000 + v
+    }
+
+    private fun labelHits(line: String): List<Hit> {
+        val all = LABELS.flatMap { (field, re) -> re.findAll(line).map { Hit(field, it.range.first, it.range.last + 1) } }
+            .filter { it.end > it.start }
+        // Drop a label found inside a longer one ("name" inside "father's name").
+        val kept = all.filter { h ->
+            all.none { o -> o !== h && o.start <= h.start && o.end >= h.end && (o.end - o.start) > (h.end - h.start) }
+        }.distinctBy { it.start }
+            // "School name", "Name of the institution": not the person's name.
+            .filterNot { h -> h.field == "name" && (NOT_PERSON.containsMatchIn(line.substring(0, h.start)) || NAME_OF_THING.containsMatchIn(line.substring(h.end))) }
+        val sorted = kept.sortedBy { it.start }
+        // A bare word like "name" deep inside a sentence is not a label: keep labels near the
+        // start of the line, or those followed by a colon/dash.
+        return sorted.filter { h ->
+            h.start <= 4 || sorted.any { it !== h && it.end <= h.start } ||
+                line.substring(h.end).trimStart().startsWith(":") || line.substring(h.end).trimStart().startsWith("-")
+        }
+    }
+
+    private fun cleanName(v: String): String? {
+        val part = v.split(GAP).firstOrNull { it.isNotBlank() } ?: return null
+        val cleaned = part.replace(Regex("""^(?:mr|mrs|ms|miss|shri|sri|smt|kumari|late)\.?\s+""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""[^A-Za-z .']"""), " ")
+            .replace(Regex("""\s+"""), " ")
+            .trim(' ', '.')
+        return cleaned.takeIf { it.count(Char::isLetter) >= 2 }
+    }
+
+    private fun cleanGender(v: String): String? = when {
+        Regex("""(?<![a-z])(female|f|girl)(?![a-z])""", RegexOption.IGNORE_CASE).containsMatchIn(v) -> "FEMALE"
+        Regex("""(?<![a-z])(male|m|boy)(?![a-z])""", RegexOption.IGNORE_CASE).containsMatchIn(v) -> "MALE"
+        Regex("""(?<![a-z])(other|transgender|t)(?![a-z])""", RegexOption.IGNORE_CASE).containsMatchIn(v) -> "OTHER"
+        else -> null
+    }
+
+    private fun cleanId(v: String): String? =
+        v.split(GAP).firstOrNull { it.isNotBlank() }
+            ?.trim()?.split(Regex("""\s+"""))?.firstOrNull()
+            ?.trim('.', ',', ':', ';')
+            ?.takeIf { it.any(Char::isDigit) && it.length <= 25 }
+
+    private fun looksLikePersonName(line: String): Boolean {
+        val words = line.trim().split(Regex("""\s+"""))
+        if (words.size !in 2..4) return false
+        if (!words.all { w -> w.all { it.isLetter() || it == '.' } }) return false
+        val lower = line.lowercase()
+        return listOf("government", "india", "father", "mother", "address", "authority", "unique", "identification")
+            .none { it in lower }
+    }
+
+    private fun digits(s: String) = s.filter(Char::isDigit)
+}
