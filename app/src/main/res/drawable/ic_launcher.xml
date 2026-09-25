@@ -1,9 +1,0 @@
-<!-- Icon for Android 7 (API 24/25); Android 8+ uses drawable-anydpi-v26/ic_launcher.xml -->
-<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item>
-        <shape android:shape="oval">
-            <solid android:color="#1E4FA3" />
-        </shape>
-    </item>
-    <item android:drawable="@drawable/ic_launcher_foreground" />
-</layer-list>

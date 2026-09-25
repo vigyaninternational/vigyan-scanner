@@ -4,7 +4,10 @@ import android.app.Activity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -43,7 +46,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -52,6 +58,7 @@ import coil.compose.AsyncImage
 import com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions
 import com.google.mlkit.vision.documentscanner.GmsDocumentScanning
 import com.google.mlkit.vision.documentscanner.GmsDocumentScanningResult
+import com.vigyan.scanner.R
 import com.vigyan.scanner.Scan
 import com.vigyan.scanner.ScanViewModel
 import java.text.SimpleDateFormat
@@ -95,6 +102,14 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit) {
         topBar = {
             TopAppBar(
                 title = { Text("Vigyan Scanner") },
+                navigationIcon = {
+                    Image(
+                        painter = painterResource(R.drawable.logo_vigyan),
+                        contentDescription = "Vigyan International logo",
+                        modifier = Modifier.padding(start = 12.dp, end = 4.dp).size(40.dp)
+                            .clip(CircleShape).background(Color.White).padding(3.dp),
+                    )
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primary,
                     titleContentColor = MaterialTheme.colorScheme.onPrimary,
@@ -117,6 +132,22 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit) {
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            item {
+                Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Image(
+                        painter = painterResource(R.drawable.logo_vigyan),
+                        contentDescription = "Vigyan International logo",
+                        modifier = Modifier.size(120.dp),
+                    )
+                    Text(
+                        "Vigyan International",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center,
+                    )
+                    Text("Document Scanner", style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
+                }
+            }
             item {
                 ActionCard("Scan document", "Save as PDF or JPG, to your phone or Google Drive") { startScanner(ScanMode.DOCUMENT) }
             }
