@@ -54,6 +54,10 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+        // Store native code compressed: a much smaller download (the Odia reader is about 12 MB uncompressed).
+        jniLibs {
+            useLegacyPackaging = true
+        }
     }
 }
 
