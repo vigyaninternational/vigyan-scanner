@@ -259,7 +259,7 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
         if (!_autoSort.value || scan.folder.isNotEmpty()) return
         viewModelScope.launch {
             try {
-                val msg = sortOne(scan)
+                val msg = sortOne(scan, quiet = true)
                 reload()
                 if (msg != null) _message.value = msg
             } catch (e: Exception) {
@@ -269,8 +269,8 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Sorts one scan; returns a message, or null if it wasn't recognised. */
-    private suspend fun sortOne(scan: Scan): String? {
-        val s = ocrMissing(scan)
+    private suspend fun sortOne(scan: Scan, quiet: Boolean = false): String? {
+        val s = ocrMissing(scan, quiet = quiet)
         val type = DocClassifier.classify(s.text.orEmpty()) ?: return null
         val person = FormExtractor.extract(s.rows ?: s.text.orEmpty())["name"]
         val current = io { repo.get(scan.id) } ?: return null
@@ -550,14 +550,19 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
     // ---- Reading text ----
 
     /** Reads the pages whose text hasn't been read yet (or all pages with [force]). */
-    private suspend fun ocrMissing(scan: Scan, force: Boolean = false, prefix: String = ""): Scan {
+    /**
+     * [quiet]: running in the background (automatic sorting). It must not touch the progress
+     * dialog: nothing would close it afterwards, and it would cover the screen.
+     */
+    private suspend fun ocrMissing(scan: Scan, force: Boolean = false, prefix: String = "", quiet: Boolean = false): Scan {
         val missing = if (force) scan.pages else io { repo.pagesWithoutOcr(scan) }
         if (missing.isEmpty()) return scan
         if (_lang.value == OcrLang.ODIA && !OdiaOcr.isReady(ctx)) {
+            if (quiet) return scan // never download 5 MB silently; sorting just waits
             io { OdiaOcr.download(ctx) { p -> _busy.value = "Downloading Odia reading data (once), $p%…" } }
         }
         val results = Ocr.readPages(ctx, missing, _lang.value) { i ->
-            _busy.value = prefix + "reading text, page ${i + 1} of ${missing.size}…"
+            if (!quiet) _busy.value = prefix + "reading text, page ${i + 1} of ${missing.size}…"
         }
         return io {
             missing.zip(results).forEach { (page, ocr) -> repo.savePageOcr(page, ocr) }
