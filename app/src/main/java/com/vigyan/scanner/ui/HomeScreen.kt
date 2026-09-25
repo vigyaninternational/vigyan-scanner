@@ -1,5 +1,10 @@
 package com.vigyan.scanner.ui
 
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.draw.alpha
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.Box
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -252,35 +257,35 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit, onNavigate: 
                 }
                 item {
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        ActionCard("Scan document", "PDF or JPG", Modifier.weight(1f)) { scan(ScanMode.DOCUMENT) }
-                        ActionCard("Scan to text", "OCR: read, edit, copy", Modifier.weight(1f)) { scan(ScanMode.TEXT) }
+                        ActionCard("Scan document", "PDF or JPG", "📄", CardBlue, Modifier.weight(1f)) { scan(ScanMode.DOCUMENT) }
+                        ActionCard("Scan to text", "OCR: read, edit, copy", "🔤", CardTeal, Modifier.weight(1f)) { scan(ScanMode.TEXT) }
                     }
                 }
                 item {
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        ActionCard("Scan & fill a form", "Form, Aadhaar, ID card", Modifier.weight(1f)) { scan(ScanMode.FILL) }
-                        ActionCard("Batch fill forms", "Many forms → one sheet", Modifier.weight(1f)) { dialog = "batch" }
+                        ActionCard("Scan & fill a form", "Form, Aadhaar, ID card", "📝", CardPurple, Modifier.weight(1f)) { scan(ScanMode.FILL) }
+                        ActionCard("Batch fill forms", "Many forms → one sheet", "🗂️", CardIndigo, Modifier.weight(1f)) { dialog = "batch" }
                     }
                 }
                 item {
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        ActionCard("Passport photo", "Face crop, white background", Modifier.weight(1f)) { dialog = "passport" }
-                        ActionCard("Signature cut-out", "See-through signature / seal", Modifier.weight(1f)) { signatureScanner(1) }
+                        ActionCard("Passport photo", "Face crop, white background", "🧑", CardPink, Modifier.weight(1f)) { dialog = "passport" }
+                        ActionCard("Signature cut-out", "See-through signature / seal", "✍️", CardOrange, Modifier.weight(1f)) { signatureScanner(1) }
                     }
                 }
                 item {
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        ActionCard("Resize for portal", "Photo / PDF under X KB", Modifier.weight(1f)) {
+                        ActionCard("Resize for portal", "Photo / PDF under X KB", "📐", CardGreen, Modifier.weight(1f)) {
                             resizePicker.launch(arrayOf("image/*", "application/pdf"))
                         }
-                        ActionCard("Document checklist", "Who has submitted what", Modifier.weight(1f)) { onNavigate("checklist") }
+                        ActionCard("Document checklist", "Who has submitted what", "✅", CardAmber, Modifier.weight(1f)) { onNavigate("checklist") }
                     }
                 }
                 item {
                     OutlinedButton(
                         onClick = { importPicker.launch(arrayOf("image/*", "application/pdf")) },
                         modifier = Modifier.fillMaxWidth(),
-                    ) { Text("Open a photo or PDF from the phone") }
+                    ) { Text("📂  Open a photo or PDF from the phone") }
                 }
             }
 
@@ -504,18 +509,43 @@ private fun ChoiceRow(label: String, selected: Boolean, onClick: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ActionCard(title: String, subtitle: String, modifier: Modifier, onClick: () -> Unit) {
+private fun ActionCard(title: String, subtitle: String, icon: String, colors: List<Color>, modifier: Modifier, onClick: () -> Unit) {
     Card(
         onClick = onClick,
-        modifier = modifier.height(92.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+        modifier = modifier.height(112.dp),
+        shape = RoundedCornerShape(20.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp, pressedElevation = 1.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.Transparent),
     ) {
-        Column(Modifier.padding(12.dp)) {
-            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Text(subtitle, style = MaterialTheme.typography.bodySmall)
+        Box(Modifier.fillMaxSize().background(Brush.linearGradient(colors))) {
+            // A big faded copy of the icon in the corner, for decoration.
+            Text(
+                icon,
+                fontSize = 64.sp,
+                modifier = Modifier.align(Alignment.BottomEnd).offset(x = 12.dp, y = 14.dp).alpha(0.22f),
+            )
+            Column(Modifier.padding(12.dp)) {
+                Box(
+                    Modifier.size(36.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.25f)),
+                    contentAlignment = Alignment.Center,
+                ) { Text(icon, fontSize = 18.sp) }
+                Spacer(Modifier.height(6.dp))
+                Text(title, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(subtitle, color = Color.White.copy(alpha = 0.9f), fontSize = 12.sp, lineHeight = 14.sp, maxLines = 2)
+            }
         }
     }
 }
+
+// Card colours (gradient start → end): the college logo's blue, green and pink, plus a few more.
+private val CardBlue = listOf(Color(0xFF1E4FA3), Color(0xFF4A86E8))
+private val CardTeal = listOf(Color(0xFF00695C), Color(0xFF26A69A))
+private val CardPurple = listOf(Color(0xFF6A1B9A), Color(0xFFAB47BC))
+private val CardIndigo = listOf(Color(0xFF283593), Color(0xFF5C6BC0))
+private val CardPink = listOf(Color(0xFFAD1457), Color(0xFFEC407A))
+private val CardOrange = listOf(Color(0xFFBF360C), Color(0xFFFF7043))
+private val CardGreen = listOf(Color(0xFF1B5E20), Color(0xFF43A047))
+private val CardAmber = listOf(Color(0xFFE65100), Color(0xFFFFA000))
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
