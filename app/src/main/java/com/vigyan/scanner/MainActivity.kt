@@ -98,6 +98,20 @@ class MainActivity : ComponentActivity() {
             nav.navigate("scan/$id")
         }
 
+        // A downloaded update: open Android's installer (or the "Install unknown apps" setting first).
+        val pendingInstall by vm.pendingInstall.collectAsStateWithLifecycle()
+        LaunchedEffect(pendingInstall) {
+            val apk = pendingInstall ?: return@LaunchedEffect
+            vm.installHandled()
+            try {
+                if (!Updater.install(this@MainActivity, apk)) {
+                    vm.say("Turn on \"Allow from this source\" for Vigyan Scanner, come back, and tap Update again.")
+                }
+            } catch (e: Exception) {
+                vm.say("Could not open the installer: ${e.message}")
+            }
+        }
+
         // Opening Drive / the share sheet needs this Activity, so the ViewModel hands the files here.
         LaunchedEffect(pendingSend) {
             val send = pendingSend ?: return@LaunchedEffect

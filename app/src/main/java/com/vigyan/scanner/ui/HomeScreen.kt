@@ -85,6 +85,7 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit, onNavigate: 
     val folder by vm.currentFolder.collectAsStateWithLifecycle()
     val hindi by vm.hindi.collectAsStateWithLifecycle()
     val autoSort by vm.autoSort.collectAsStateWithLifecycle()
+    val update by vm.update.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     var mode by rememberSaveable { mutableStateOf(ScanMode.DOCUMENT) }
@@ -199,6 +200,10 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit, onNavigate: 
                                 onClick = { menu = false; dialog = "newFolder" },
                             )
                             DropdownMenuItem(
+                                text = { Text("Check for updates (you have ${BuildConfig.VERSION_NAME})") },
+                                onClick = { menu = false; vm.checkForUpdate(manual = true) },
+                            )
+                            DropdownMenuItem(
                                 text = { Text("Share this app") },
                                 onClick = { menu = false; dialog = "shareApp" },
                             )
@@ -213,6 +218,23 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit, onNavigate: 
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
+            update?.let { u ->
+                item {
+                    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)) {
+                        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("New version ${u.name} is available", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                                Text(
+                                    "You have ${BuildConfig.VERSION_NAME}. Your scans are kept." +
+                                        (if (u.size > 0) " (${u.size / (1024 * 1024)} MB)" else ""),
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                            Button(onClick = { vm.downloadUpdate() }) { Text("Update") }
+                        }
+                    }
+                }
+            }
             if (q.isEmpty() && folder == null && !selecting) {
                 item {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {

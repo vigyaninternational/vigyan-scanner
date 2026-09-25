@@ -130,6 +130,62 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
         if (sort) autoSortInBackground(scan)
     }
 
+    // ---- In-app update ----
+
+    /** A newer release than the one installed, once found. */
+    private val _update = MutableStateFlow<Updater.Release?>(null)
+    val update: StateFlow<Updater.Release?> = _update
+
+    /** A downloaded update for the screen to hand to Android's installer. */
+    private val _pendingInstall = MutableStateFlow<File?>(null)
+    val pendingInstall: StateFlow<File?> = _pendingInstall
+
+    fun installHandled() {
+        _pendingInstall.value = null
+    }
+
+    init {
+        // An update found earlier stays on offer (until it is installed) without asking GitHub again.
+        val code = prefs.getInt("update_code", 0)
+        if (code > BuildConfig.VERSION_CODE) {
+            _update.value = Updater.Release(
+                code, prefs.getString("update_name", "").orEmpty(),
+                prefs.getString("update_url", "").orEmpty(), prefs.getLong("update_size", 0),
+            )
+        }
+        checkForUpdate(manual = false)
+    }
+
+    /** Quietly at start-up (at most every 6 hours), or with a message when [manual]. */
+    fun checkForUpdate(manual: Boolean) {
+        val now = System.currentTimeMillis()
+        if (!manual && now - prefs.getLong(KEY_LAST_CHECK, 0) < 6 * 3600_000L) return
+        val go: suspend () -> Unit = {
+            val latest = io { Updater.latest() }
+            prefs.edit().putLong(KEY_LAST_CHECK, now).apply()
+            if (latest != null && latest.code > BuildConfig.VERSION_CODE) {
+                _update.value = latest
+                prefs.edit().putInt("update_code", latest.code).putString("update_name", latest.name)
+                    .putString("update_url", latest.url).putLong("update_size", latest.size).apply()
+                if (manual) _message.value = "Version ${latest.name} is available"
+            } else if (manual) {
+                _message.value = "You have the latest version (${BuildConfig.VERSION_NAME})"
+            }
+        }
+        if (manual) {
+            work("Checking for updates…") { go() }
+        } else {
+            viewModelScope.launch { runCatching { go() } } // no internet: just try again next time
+        }
+    }
+
+    fun downloadUpdate() = work("Downloading the update…") {
+        val release = _update.value ?: error("No update found")
+        val file = File(ctx.cacheDir, "update/VigyanScanner-${release.code}.apk")
+        io { Updater.download(release, file) { pct -> _busy.value = "Downloading the update… $pct%" } }
+        _pendingInstall.value = file
+    }
+
     // ---- Automatic sorting ----
 
     private val _autoSort = MutableStateFlow(prefs.getBoolean(KEY_AUTO_SORT, true))
@@ -595,6 +651,7 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
     private companion object {
         const val KEY_HINDI = "ocr_hindi"
         const val KEY_AUTO_SORT = "auto_sort"
+        const val KEY_LAST_CHECK = "update_last_check"
         const val STUDENT_DOCS = "Student documents"
     }
 }

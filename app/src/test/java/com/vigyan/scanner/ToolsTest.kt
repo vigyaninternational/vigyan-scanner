@@ -164,3 +164,15 @@ class ChecklistTest {
         assertNull(Checklist.typeFor(DocType.PAN, types))
     }
 }
+
+class VersionsTest {
+    @Test
+    fun tagsAndCodes() {
+        assertEquals(12, Versions.codeFromTag("v1.0.12"))
+        assertEquals(8, Versions.codeFromTag("1.0.8"))
+        assertNull(Versions.codeFromTag("latest"))
+        assertTrue(Versions.isNewer("v1.0.9", 8))
+        assertEquals(false, Versions.isNewer("v1.0.8", 8))
+        assertEquals(false, Versions.isNewer("v1.0.7", 8))
+    }
+}

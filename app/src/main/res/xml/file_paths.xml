@@ -3,4 +3,5 @@
     <cache-path name="export" path="export/" />
     <cache-path name="apk" path="apk/" />
     <cache-path name="camera" path="camera/" />
+    <cache-path name="update" path="update/" />
 </paths>
