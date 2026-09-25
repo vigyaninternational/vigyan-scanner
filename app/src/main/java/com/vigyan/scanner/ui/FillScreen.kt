@@ -50,9 +50,10 @@ fun FillScreen(vm: ScanViewModel, scan: Scan, onBack: () -> Unit) {
     // Saved as a plain HashMap so it survives screen rotation.
     var fields by rememberSaveable(scan.id) { mutableStateOf(HashMap(scan.fields)) }
     var loaded by rememberSaveable(scan.id) { mutableStateOf(false) }
+    var fromQr by rememberSaveable(scan.id) { mutableStateOf(false) }
 
     LaunchedEffect(scan.id) {
-        if (!loaded) vm.smartFill(scan) { fields = HashMap(it); loaded = true }
+        if (!loaded) vm.smartFill(scan) { found, qr -> fields = HashMap(found); fromQr = qr; loaded = true }
     }
 
     fun asText() = FormExtractor.FIELDS.mapNotNull { f ->
@@ -65,7 +66,7 @@ fun FillScreen(vm: ScanViewModel, scan: Scan, onBack: () -> Unit) {
                 title = { Text("Smart Fill") },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
                 actions = {
-                    IconButton(onClick = { vm.refill(scan) { fields = HashMap(it) } }) { Icon(Icons.Default.Refresh, "Fill again from scan") }
+                    IconButton(onClick = { vm.refill(scan) { found, qr -> fields = HashMap(found); fromQr = qr } }) { Icon(Icons.Default.Refresh, "Fill again from scan") }
                 },
             )
         },
@@ -80,6 +81,13 @@ fun FillScreen(vm: ScanViewModel, scan: Scan, onBack: () -> Unit) {
                 contentScale = ContentScale.Fit,
                 modifier = Modifier.fillMaxWidth().height(220.dp).border(1.dp, MaterialTheme.colorScheme.outlineVariant),
             )
+            if (fromQr) {
+                Text(
+                    "✓ Read from the Aadhaar QR code: name, DOB, gender and address are exactly as UIDAI has them.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
             Text(
                 "Filled from the scan. Please check every box against the paper and correct anything wrong.",
                 style = MaterialTheme.typography.bodySmall,
@@ -113,13 +121,13 @@ fun FillScreen(vm: ScanViewModel, scan: Scan, onBack: () -> Unit) {
                 Column(Modifier.padding(16.dp)) {
                     Text("Save as CSV (Excel / Google Sheets)", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "Columns match the Vigyan ERP student CSV import. To put many forms in one sheet, use ⋮ › Export all filled forms on the home screen.",
+                        "Columns match the Vigyan ERP student CSV import. To put many forms in one sheet, use Batch fill forms, or ⋮ › Export filled forms on the home screen.",
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.padding(bottom = 8.dp),
                     )
                     SendButtons(onDenied = { vm.say("Storage permission is needed to save to the phone") }) { target ->
                         vm.saveFields(scan, fields)
-                        vm.exportForms(scan, fields, target)
+                        vm.exportForms(listOf(scan), fields["name"]?.takeIf { it.isNotBlank() } ?: scan.name, target, override = fields)
                     }
                 }
             }

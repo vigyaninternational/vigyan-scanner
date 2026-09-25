@@ -22,6 +22,18 @@ enum class Format(val label: String, val ext: String, val mime: String) {
     TXT("Text (OCR)", "txt", "text/plain"),
 }
 
+/** What to export: formats plus PDF options. */
+data class ExportOptions(
+    val formats: Set<Format>,
+    val quality: Quality = Quality.NORMAL,
+    /** Invisible OCR text in the PDF so it can be searched and copied. */
+    val searchable: Boolean = true,
+    /** All pages at real ID-card size on A4 (Aadhaar front + back on one sheet). */
+    val idCard: Boolean = false,
+    /** Open password for the PDF, or null. */
+    val password: String? = null,
+)
+
 /** Turns a scan into files and sends them to phone storage, Google Drive, or any app. */
 object Exporter {
 
@@ -35,24 +47,80 @@ object Exporter {
 
     private fun safeName(name: String) = name.replace(Regex("""[\\/:*?"<>|]"""), "_").trim().ifBlank { "scan" }
 
-    /** Writes the chosen formats of [scan] into the cache export folder. Text must be read first. */
-    fun files(context: Context, scan: Scan, formats: Set<Format>): List<File> {
+    /**
+     * Writes the chosen formats of [scan] into the cache export folder. [ocr] is the text of each
+     * page (for a searchable PDF; null entries get no text layer).
+     */
+    fun files(context: Context, scan: Scan, options: ExportOptions, ocr: List<PageOcr?>): List<File> {
         val dir = exportDir(context)
         val base = safeName(scan.name)
         val out = mutableListOf<File>()
-        if (Format.PDF in formats && scan.pdf != null) {
-            out += scan.pdf.copyTo(File(dir, "$base.pdf"), overwrite = true)
+        if (Format.PDF in options.formats) {
+            val file = File(dir, "$base.pdf")
+            file.outputStream().use { stream ->
+                PdfWriter().write(pdfPages(scan.pages, if (options.searchable) ocr else emptyList(), options), stream, options.password)
+            }
+            out += file
         }
-        if (Format.JPG in formats) {
+        if (Format.JPG in options.formats) {
             scan.pages.forEachIndexed { i, page ->
                 val name = if (scan.pages.size == 1) "$base.jpg" else "${base}_page${i + 1}.jpg"
-                out += page.copyTo(File(dir, name), overwrite = true)
+                val dest = File(dir, name)
+                if (options.quality == Quality.HIGH) page.copyTo(dest, overwrite = true)
+                else dest.writeBytes(Images.jpeg(page, options.quality).jpeg)
+                out += dest
             }
         }
-        if (Format.TXT in formats && scan.text != null) {
+        if (Format.TXT in options.formats && scan.text != null) {
             out += File(dir, "$base.txt").apply { writeText(scan.text) }
         }
         return out
+    }
+
+    private const val A4_W = 595f
+    private const val A4_H = 842f
+
+    // An ID card (ID-1) is 85.6 x 54 mm = 243 x 153 points.
+    private const val CARD_LONG = 243f
+    private const val CARD_SHORT = 153f
+
+    private fun pdfPages(pages: List<File>, ocr: List<PageOcr?>, options: ExportOptions): List<PdfWriter.Page> {
+        fun placement(i: Int, x: Float, y: Float, w: Float, h: Float, image: PdfWriter.Image): PdfWriter.Placement {
+            val o = ocr.getOrNull(i)
+            return if (o != null) PdfWriter.Placement(image, x, y, w, h, o.lines, o.width, o.height)
+            else PdfWriter.Placement(image, x, y, w, h)
+        }
+        if (!options.idCard) {
+            // One PDF page per scanned page, A4 width, same shape as the scan.
+            return pages.mapIndexed { i, file ->
+                val image = Images.jpeg(file, options.quality)
+                val h = A4_W * image.pixelHeight / image.pixelWidth
+                PdfWriter.Page(A4_W, h, listOf(placement(i, 0f, 0f, A4_W, h, image)))
+            }
+        }
+        // ID card: every page shrunk to real card size on A4 sheets, one column for a front and
+        // back, two columns when there are more, so it prints like a photocopy of the card.
+        val perSheet = 6 // 2 columns x 3 rows fit on A4
+        return pages.indices.chunked(perSheet).map { chunk ->
+            val cols = if (pages.size <= 2) 1 else 2
+            val cellW = A4_W / cols
+            val cellH = CARD_LONG + 24f
+            val placements = chunk.mapIndexed { k, i ->
+                val image = Images.jpeg(pages[i], options.quality)
+                val landscape = image.pixelWidth >= image.pixelHeight
+                val boxW = if (landscape) CARD_LONG else CARD_SHORT
+                val boxH = if (landscape) CARD_SHORT else CARD_LONG
+                val scale = minOf(boxW / image.pixelWidth, boxH / image.pixelHeight)
+                val w = image.pixelWidth * scale
+                val h = image.pixelHeight * scale
+                val col = k % cols
+                val row = k / cols
+                val x = col * cellW + (cellW - w) / 2
+                val y = 40f + row * cellH + (cellH - h) / 2
+                placement(i, x, y, w, h, image)
+            }
+            PdfWriter.Page(A4_W, A4_H, placements)
+        }
     }
 
     /** One CSV row per filled form. Column names match the Vigyan ERP student CSV import. */

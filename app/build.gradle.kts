@@ -76,6 +76,12 @@ dependencies {
     implementation("com.google.android.gms:play-services-mlkit-document-scanner:16.0.0-beta1")
     // OCR (reads printed English text), also through Google Play services.
     implementation("com.google.android.gms:play-services-mlkit-text-recognition:19.0.1")
+    // Hindi (Devanagari) OCR; it reads English too.
+    implementation("com.google.android.gms:play-services-mlkit-text-recognition-devanagari:16.0.1")
+    // QR codes (the Aadhaar QR).
+    implementation("com.google.android.gms:play-services-mlkit-barcode-scanning:18.3.1")
 
     testImplementation("junit:junit:4.13.2")
+    // Opens the PDFs PdfWriter makes, to check text and password in tests.
+    testImplementation("org.apache.pdfbox:pdfbox:2.0.32")
 }

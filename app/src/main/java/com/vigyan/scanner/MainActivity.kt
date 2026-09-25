@@ -1,5 +1,7 @@
 package com.vigyan.scanner
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -18,6 +20,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.core.content.IntentCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
@@ -37,11 +40,29 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (savedInstanceState == null) handleShared(intent)
         setContent {
             ScannerTheme {
                 Surface(Modifier.fillMaxSize()) { App(vm) }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleShared(intent)
+    }
+
+    /** A photo or PDF shared to the app (WhatsApp, Gallery, Files…) becomes a new scan. */
+    private fun handleShared(intent: Intent?) {
+        intent ?: return
+        val uris: List<Uri> = when (intent.action) {
+            Intent.ACTION_SEND -> listOfNotNull(IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java))
+            Intent.ACTION_SEND_MULTIPLE -> IntentCompat.getParcelableArrayListExtra(intent, Intent.EXTRA_STREAM, Uri::class.java).orEmpty()
+            Intent.ACTION_VIEW -> listOfNotNull(intent.data)
+            else -> emptyList()
+        }
+        if (uris.isNotEmpty()) vm.importUris(uris)
     }
 
     @Composable
@@ -50,6 +71,7 @@ class MainActivity : ComponentActivity() {
         val busy by vm.busy.collectAsStateWithLifecycle()
         val message by vm.message.collectAsStateWithLifecycle()
         val pendingSend by vm.pendingSend.collectAsStateWithLifecycle()
+        val openScan by vm.openScan.collectAsStateWithLifecycle()
         val snackbar = remember { SnackbarHostState() }
 
         LaunchedEffect(message) {
@@ -57,6 +79,14 @@ class MainActivity : ComponentActivity() {
                 vm.messageShown()
                 snackbar.showSnackbar(it)
             }
+        }
+
+        // Something shared from another app was imported: show it.
+        LaunchedEffect(openScan) {
+            val id = openScan ?: return@LaunchedEffect
+            vm.openHandled()
+            nav.popBackStack("home", false)
+            nav.navigate("scan/$id")
         }
 
         // Opening Drive / the share sheet needs this Activity, so the ViewModel hands the files here.

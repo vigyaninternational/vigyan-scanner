@@ -1,0 +1,146 @@
+package com.vigyan.scanner
+
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Color
+import android.graphics.ImageDecoder
+import android.graphics.Matrix
+import android.graphics.pdf.PdfRenderer
+import android.net.Uri
+import android.os.Build
+import java.io.ByteArrayOutputStream
+import java.io.File
+import kotlin.math.max
+import kotlin.math.roundToInt
+
+/** Image quality for PDFs and JPGs: longest side in pixels and JPEG quality. */
+enum class Quality(val label: String, val hint: String, val maxSide: Int, val jpeg: Int) {
+    SMALL("Small", "WhatsApp / email", 1300, 55),
+    NORMAL("Normal", "good for most", 2000, 75),
+    HIGH("High", "best for printing", 4000, 92),
+}
+
+/** Bitmap helpers: resizing, rotating and importing photos/PDFs as page images. */
+object Images {
+
+    /** Decodes [file] no larger than [maxSide] and returns it as JPEG bytes with its size. */
+    fun jpeg(file: File, quality: Quality): PdfWriter.Image {
+        val bitmap = decode(file, quality.maxSide)
+        try {
+            val out = ByteArrayOutputStream()
+            bitmap.compress(Bitmap.CompressFormat.JPEG, quality.jpeg, out)
+            return PdfWriter.Image(out.toByteArray(), bitmap.width, bitmap.height)
+        } finally {
+            bitmap.recycle()
+        }
+    }
+
+    /** Width and height of the image in [file], without loading it. */
+    fun size(file: File): Pair<Int, Int> {
+        val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(file.absolutePath, o)
+        return o.outWidth to o.outHeight
+    }
+
+    fun decode(file: File, maxSide: Int): Bitmap {
+        val (w, h) = size(file)
+        var sample = 1
+        while (max(w, h) / (sample * 2) >= maxSide) sample *= 2
+        val bitmap = BitmapFactory.decodeFile(file.absolutePath, BitmapFactory.Options().apply { inSampleSize = sample })
+            ?: error("Could not open ${file.name}")
+        return fit(bitmap, maxSide)
+    }
+
+    private fun fit(bitmap: Bitmap, maxSide: Int): Bitmap {
+        val longest = max(bitmap.width, bitmap.height)
+        if (longest <= maxSide) return bitmap
+        val scale = maxSide.toFloat() / longest
+        val scaled = Bitmap.createScaledBitmap(bitmap, (bitmap.width * scale).roundToInt(), (bitmap.height * scale).roundToInt(), true)
+        if (scaled !== bitmap) bitmap.recycle()
+        return scaled
+    }
+
+    fun save(bitmap: Bitmap, dest: File, quality: Int = 92) {
+        dest.outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, quality, it) }
+    }
+
+    /** Turns the page image a quarter turn clockwise, in place. */
+    fun rotate(file: File) {
+        val bitmap = decode(file, 5000)
+        val rotated = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, Matrix().apply { postRotate(90f) }, true)
+        save(rotated, file)
+        bitmap.recycle()
+        rotated.recycle()
+    }
+
+    /**
+     * Photos and PDFs shared from WhatsApp, the gallery or Files → JPEG page images in [dir].
+     * Each PDF page becomes one image.
+     */
+    fun import(context: Context, uris: List<Uri>, dir: File): List<File> {
+        dir.mkdirs()
+        val out = mutableListOf<File>()
+        var n = 0
+        for (uri in uris) {
+            val type = context.contentResolver.getType(uri).orEmpty()
+            val isPdf = type == "application/pdf" || uri.toString().lowercase().endsWith(".pdf")
+            if (isPdf) {
+                val fd = context.contentResolver.openFileDescriptor(uri, "r") ?: error("Could not open the PDF")
+                try {
+                    val pdf = PdfRenderer(fd)
+                    try {
+                        for (i in 0 until pdf.pageCount) {
+                            val page = pdf.openPage(i)
+                            try {
+                                // About 180 dpi, capped so big pages don't run out of memory.
+                                val scale = minOf(2.5f, 2200f / max(page.width, page.height))
+                                val bitmap = Bitmap.createBitmap((page.width * scale).roundToInt(), (page.height * scale).roundToInt(), Bitmap.Config.ARGB_8888)
+                                bitmap.eraseColor(Color.WHITE)
+                                page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                                out += File(dir, "import_${n++}.jpg").also { save(bitmap, it) }
+                                bitmap.recycle()
+                            } finally {
+                                page.close()
+                            }
+                        }
+                    } finally {
+                        pdf.close()
+                    }
+                } catch (e: SecurityException) {
+                    error("This PDF is password-protected. Open it in a PDF app first.")
+                } finally {
+                    fd.close()
+                }
+            } else {
+                val bitmap = decodeUri(context, uri, 3000)
+                out += File(dir, "import_${n++}.jpg").also { save(bitmap, it) }
+                bitmap.recycle()
+            }
+        }
+        return out
+    }
+
+    private fun decodeUri(context: Context, uri: Uri, maxSide: Int): Bitmap {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            // ImageDecoder also applies the photo's rotation (EXIF).
+            val source = ImageDecoder.createSource(context.contentResolver, uri)
+            return ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
+                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                val longest = max(info.size.width, info.size.height)
+                if (longest > maxSide) {
+                    val s = maxSide.toFloat() / longest
+                    decoder.setTargetSize((info.size.width * s).roundToInt(), (info.size.height * s).roundToInt())
+                }
+            }
+        }
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+        var sample = 1
+        while (max(bounds.outWidth, bounds.outHeight) / (sample * 2) >= maxSide) sample *= 2
+        val bitmap = context.contentResolver.openInputStream(uri)?.use {
+            BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample })
+        } ?: error("Could not open the image")
+        return fit(bitmap, maxSide)
+    }
+}
