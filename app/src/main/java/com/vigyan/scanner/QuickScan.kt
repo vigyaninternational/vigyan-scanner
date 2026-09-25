@@ -12,7 +12,7 @@ import java.io.File
 /** Turns a Quick scan camera photo into a clean page image. */
 object QuickScan {
 
-    /** Upright, straightened to the page's four edges (DocDetect) and, with [enhance], brightened. */
+    /** Upright and, with [enhance], brightened. The whole photo is kept (corners can be set by hand with ⛶). */
     fun process(raw: File, dest: File, enhance: Boolean) {
         var bmp = Images.decode(raw, 2400)
         // The camera saves the picture sideways plus a "turn me" note (EXIF); apply it.
@@ -28,15 +28,8 @@ object QuickScan {
             bmp = turned
         }
 
-        // Find the page's four corners and straighten it (tilted or photographed at an angle).
-        Perspective.sample(bmp).quad()?.let { quad ->
-            val flat = Perspective.warp(bmp, quad)
-            bmp.recycle()
-            bmp = flat
-        }
-
         if (enhance) {
-            // Levels from the (now trimmed) page itself.
+            // Levels from the page itself.
             val (black, white) = QuickScanLogic.levels(Perspective.sample(bmp, 200).lum)
             val scale = 255f / (white - black)
             val out = Bitmap.createBitmap(bmp.width, bmp.height, Bitmap.Config.ARGB_8888)
