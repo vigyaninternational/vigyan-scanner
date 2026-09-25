@@ -10,6 +10,8 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // Tesseract (Odia text reading) is published on JitPack.
+        maven("https://jitpack.io")
     }
 }
 

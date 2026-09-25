@@ -284,6 +284,7 @@ object Exporter {
         "txt" -> "text/plain"
         "csv" -> "text/csv"
         "png" -> "image/png"
+        "zip" -> "application/zip"
         else -> "application/octet-stream"
     }
 

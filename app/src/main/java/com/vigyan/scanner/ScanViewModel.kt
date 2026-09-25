@@ -39,9 +39,12 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message
 
-    /** Read Hindi as well as English. */
-    private val _hindi = MutableStateFlow(prefs.getBoolean(KEY_HINDI, false))
-    val hindi: StateFlow<Boolean> = _hindi
+    /** Text reading language (English, English + Hindi, English + Odia). */
+    private val _lang = MutableStateFlow(
+        OcrLang.values().firstOrNull { it.name == prefs.getString(KEY_LANG, null) }
+            ?: if (prefs.getBoolean(KEY_HINDI, false)) OcrLang.HINDI else OcrLang.ENGLISH,
+    )
+    val lang: StateFlow<OcrLang> = _lang
 
     /** A scan the screen should open (after importing something shared from another app). */
     private val _openScan = MutableStateFlow<String?>(null)
@@ -80,9 +83,10 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
         _currentFolder.value = folder
     }
 
-    fun setHindi(on: Boolean) {
-        _hindi.value = on
-        prefs.edit().putBoolean(KEY_HINDI, on).apply()
+    fun setLang(l: OcrLang) {
+        _lang.value = l
+        prefs.edit().putString(KEY_LANG, l.name).apply()
+        if (l == OcrLang.ODIA && !OdiaOcr.isReady(ctx)) downloadOdia()
     }
 
     private suspend fun <T> io(block: () -> T): T = withContext(Dispatchers.IO) { block() }
@@ -184,6 +188,56 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
         val file = File(ctx.cacheDir, "update/VigyanScanner-${release.code}.apk")
         io { Updater.download(release, file) { pct -> _busy.value = "Downloading the update… $pct%" } }
         _pendingInstall.value = file
+    }
+
+    // ---- Odia ----
+
+    fun downloadOdia() = work("Downloading Odia reading data…") {
+        io { OdiaOcr.download(ctx) { p -> _busy.value = "Downloading Odia reading data (once, about 5 MB)… $p%" } }
+        _message.value = "Odia reading is ready. It works offline from now on."
+    }
+
+    // ---- Backup (each phone its own) ----
+
+    private val _lastBackup = MutableStateFlow(prefs.getLong(KEY_LAST_BACKUP, 0L))
+    val lastBackup: StateFlow<Long> = _lastBackup
+
+    fun backup(target: Target) = send(target, "Making the backup…") {
+        val dir = File(ctx.cacheDir, "export").apply { deleteRecursively(); mkdirs() }
+        val file = File(dir, "Vigyan Scanner backup ${SimpleDateFormat("dd-MM-yyyy HH.mm", Locale.US).format(Date())}.zip")
+        val count = io { file.outputStream().use { Backup.create(ctx, it) } }
+        val now = System.currentTimeMillis()
+        prefs.edit().putLong(KEY_LAST_BACKUP, now).apply()
+        _lastBackup.value = now
+        _message.value = "Backup made: $count scan(s), ${(file.length() + 1_048_575) / 1_048_576} MB"
+        listOf(file)
+    }
+
+    fun restore(uri: Uri) = work("Restoring the backup…") {
+        val result = io {
+            ctx.contentResolver.openInputStream(uri)?.use { Backup.restore(ctx, it) } ?: error("Could not open the file")
+        }
+        _checklist.value = checklistRepo.load()
+        _brandingVersion.value++
+        _message.value = "Restored ${result.scansAdded} scan(s)" +
+            (if (result.scansSkipped > 0) ", ${result.scansSkipped} already here" else "") +
+            (if (result.studentsAdded > 0) ", ${result.studentsAdded} checklist student(s)" else "")
+    }
+
+    // ---- Writing on a page ----
+
+    /** Saves a page after drawing / writing on it (the untouched original is kept for Undo). */
+    fun savePageEdit(scan: Scan, index: Int, edited: android.graphics.Bitmap, then: () -> Unit) = work("Saving the page…") {
+        io { repo.replacePage(scan, index, edited) }
+        _message.value = "Page saved"
+        then()
+    }
+
+    fun hasOriginal(page: File) = repo.hasOriginal(page)
+
+    fun restoreOriginalPage(scan: Scan, index: Int) = work("Restoring…") {
+        io { repo.restoreOriginal(scan, index) }
+        _message.value = "Original page restored"
     }
 
     // ---- Automatic sorting ----
@@ -499,7 +553,10 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun ocrMissing(scan: Scan, force: Boolean = false, prefix: String = ""): Scan {
         val missing = if (force) scan.pages else io { repo.pagesWithoutOcr(scan) }
         if (missing.isEmpty()) return scan
-        val results = Ocr.readPages(ctx, missing, _hindi.value) { i ->
+        if (_lang.value == OcrLang.ODIA && !OdiaOcr.isReady(ctx)) {
+            io { OdiaOcr.download(ctx) { p -> _busy.value = "Downloading Odia reading data (once), $p%…" } }
+        }
+        val results = Ocr.readPages(ctx, missing, _lang.value) { i ->
             _busy.value = prefix + "reading text, page ${i + 1} of ${missing.size}…"
         }
         return io {
@@ -650,6 +707,8 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
 
     private companion object {
         const val KEY_HINDI = "ocr_hindi"
+        const val KEY_LANG = "ocr_lang"
+        const val KEY_LAST_BACKUP = "last_backup"
         const val KEY_AUTO_SORT = "auto_sort"
         const val KEY_LAST_CHECK = "update_last_check"
         const val STUDENT_DOCS = "Student documents"

@@ -55,7 +55,7 @@ import com.vigyan.scanner.ScanViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ToolScaffold(title: String, onBack: () -> Unit, content: @Composable () -> Unit) {
+fun ToolScaffold(title: String, onBack: () -> Unit, content: @Composable () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(

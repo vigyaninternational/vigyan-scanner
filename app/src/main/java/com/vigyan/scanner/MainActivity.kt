@@ -3,7 +3,14 @@ package com.vigyan.scanner
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
-import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
+import android.os.SystemClock
+import androidx.biometric.BiometricManager
+import androidx.biometric.BiometricPrompt
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.core.content.ContextCompat
+import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Box
@@ -29,6 +36,11 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.NavType
 import androidx.navigation.navArgument
 import com.vigyan.scanner.ui.BusyDialog
+import com.vigyan.scanner.ui.AnnotateScreen
+import com.vigyan.scanner.ui.AppLockScreen
+import com.vigyan.scanner.ui.BackupScreen
+import com.vigyan.scanner.ui.LockScreen
+import com.vigyan.scanner.ui.fingerprintAvailable
 import com.vigyan.scanner.ui.BrandingScreen
 import com.vigyan.scanner.ui.ChecklistScreen
 import com.vigyan.scanner.ui.CutoutScreen
@@ -43,17 +55,80 @@ import com.vigyan.scanner.ui.ScanMode
 import com.vigyan.scanner.ui.ScannerTheme
 import com.vigyan.scanner.ui.TextScreen
 
-class MainActivity : ComponentActivity() {
+// A FragmentActivity (still a ComponentActivity) because the fingerprint prompt needs one.
+class MainActivity : FragmentActivity() {
 
     private val vm: ScanViewModel by viewModels()
+    private val appLock by lazy { AppLock(this) }
+
+    /** True while the PIN screen covers the app. */
+    private var locked by mutableStateOf(false)
+    private var leftAt = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Turning the phone keeps the unlocked state; a fresh start is locked.
+        locked = appLock.enabled && (savedInstanceState?.getBoolean(KEY_LOCKED, true) ?: true)
         if (savedInstanceState == null) handleShared(intent)
         setContent {
             ScannerTheme {
-                Surface(Modifier.fillMaxSize()) { App(vm) }
+                Surface(Modifier.fillMaxSize()) {
+                    Box(Modifier.fillMaxSize()) {
+                        App(vm)
+                        if (locked) {
+                            BackHandler { moveTaskToBack(true) }
+                            LockScreen(
+                                lock = appLock,
+                                onFingerprint = if (appLock.fingerprint && fingerprintAvailable(this@MainActivity)) ({ askFingerprint() }) else null,
+                                onUnlocked = { locked = false },
+                            )
+                        }
+                    }
+                }
             }
+        }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putBoolean(KEY_LOCKED, locked)
+    }
+
+    override fun onStop() {
+        super.onStop()
+        leftAt = SystemClock.elapsedRealtime()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // Lock again after the app was left for longer than the chosen time. Coming back from the
+        // scanner, camera or share sheet within that time does not lock.
+        if (appLock.enabled && leftAt > 0 && SystemClock.elapsedRealtime() - leftAt >= appLock.timeoutSeconds * 1000L) {
+            locked = true
+        }
+        if (!appLock.enabled) locked = false
+    }
+
+    private fun askFingerprint() {
+        try {
+            val prompt = BiometricPrompt(
+                this,
+                ContextCompat.getMainExecutor(this),
+                object : BiometricPrompt.AuthenticationCallback() {
+                    override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                        locked = false
+                    }
+                },
+            )
+            prompt.authenticate(
+                BiometricPrompt.PromptInfo.Builder()
+                    .setTitle("Unlock Vigyan Scanner")
+                    .setNegativeButtonText("Use PIN")
+                    .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_WEAK)
+                    .build(),
+            )
+        } catch (e: Exception) {
+            vm.say("Fingerprint isn't available right now. Use your PIN.")
         }
     }
 
@@ -172,6 +247,13 @@ class MainActivity : ComponentActivity() {
                     )
                 }
             }
+            composable("annotate/{id}/{page}") { entry ->
+                scans.firstOrNull { it.id == entry.arguments?.getString("id") }?.let { scan ->
+                    AnnotateScreen(vm, scan, entry.arguments?.getString("page")?.toIntOrNull() ?: 0, onBack = { nav.popBackStack() })
+                }
+            }
+            composable("backup") { BackupScreen(vm, onBack = { nav.popBackStack() }) }
+            composable("applock") { AppLockScreen(onBack = { nav.popBackStack() }, say = vm::say) }
             composable("marks/{id}") { entry ->
                 scans.firstOrNull { it.id == entry.arguments?.getString("id") }
                     ?.let { MarksheetScreen(vm, it, onBack = { nav.popBackStack() }) }
@@ -205,3 +287,5 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
+
+private const val KEY_LOCKED = "locked"

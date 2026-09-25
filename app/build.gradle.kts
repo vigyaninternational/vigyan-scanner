@@ -15,6 +15,8 @@ android {
         versionCode = (System.getenv("VERSION_CODE") ?: "").toIntOrNull() ?: 1
         versionName = System.getenv("VERSION_NAME")?.takeIf { it.isNotBlank() } ?: "1.0.0"
         vectorDrawables { useSupportLibrary = true }
+        // Only the processor types real phones use: keeps the Odia reader (native code) small.
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
 
     signingConfigs {
@@ -83,6 +85,11 @@ dependencies {
     // Passport photo: face position, and the person vs background (for a white background).
     implementation("com.google.android.gms:play-services-mlkit-face-detection:17.1.0")
     implementation("com.google.android.gms:play-services-mlkit-subject-segmentation:16.0.0-beta1")
+    // Odia text reading (Tesseract). The Odia + English data (about 5.5 MB) downloads on first use.
+    implementation("com.github.adaptech-cz.Tesseract4Android:tesseract4android:4.8.0")
+    // Fingerprint unlock for the app lock (needs a FragmentActivity).
+    implementation("androidx.biometric:biometric:1.1.0")
+    implementation("androidx.fragment:fragment-ktx:1.8.2")
 
     testImplementation("junit:junit:4.13.2")
     // Opens the PDFs PdfWriter makes, to check text and password in tests.

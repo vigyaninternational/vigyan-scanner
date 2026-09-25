@@ -176,3 +176,22 @@ class VersionsTest {
         assertEquals(false, Versions.isNewer("v1.0.7", 8))
     }
 }
+
+class PinHashTest {
+    @Test
+    fun hashing() {
+        assertEquals(PinHash.hash("abc", "1234"), PinHash.hash("abc", "1234"))
+        assertTrue(PinHash.hash("abc", "1234") != PinHash.hash("abd", "1234"))
+        assertTrue(PinHash.valid("1234") && PinHash.valid("123456"))
+        assertEquals(false, PinHash.valid("123"))
+        assertEquals(false, PinHash.valid("12a4"))
+    }
+}
+
+class OcrLayoutFallbackTest {
+    @Test
+    fun pagesWithoutPositionsUseTheirText() {
+        val (_, rows) = OcrLayout.combine(listOf(PageOcr(100, 100, "ଓଡ଼ିଆ text", emptyList())))
+        assertEquals("ଓଡ଼ିଆ text", rows)
+    }
+}

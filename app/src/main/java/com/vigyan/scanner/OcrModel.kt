@@ -39,7 +39,8 @@ object OcrLayout {
         val text = pages.mapIndexed { i, p ->
             (if (pages.size > 1) "--- Page ${i + 1} ---\n" else "") + p.text.trim()
         }.joinToString("\n\n").trim()
-        val rows = pages.joinToString("\n") { rows(it.lines) }
+        // Pages read without word positions (Odia) fall back to their plain text.
+        val rows = pages.joinToString("\n") { if (it.lines.isEmpty()) it.text else rows(it.lines) }
         return text to rows
     }
 }

@@ -10,19 +10,30 @@ import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.devanagari.DevanagariTextRecognizerOptions
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
+/** Which reader to use: ML Kit Latin, ML Kit Devanagari (Hindi + English), or Tesseract (Odia + English). */
+enum class OcrLang(val label: String) {
+    ENGLISH("English"),
+    HINDI("English + Hindi"),
+    ODIA("English + Odia"),
+}
+
 /**
- * On-phone OCR with ML Kit. English by default; with [hindi] on, the Devanagari model reads
- * Hindi and English together. The first use of a model may take a moment while Google Play
- * services downloads it.
+ * On-phone OCR. English by default; the Devanagari model reads Hindi and English together, and
+ * Odia goes to Tesseract (OdiaOcr). The first use of a model may take a moment while it downloads.
  */
 object Ocr {
 
-    suspend fun readPages(context: Context, pages: List<File>, hindi: Boolean, onPage: (Int) -> Unit = {}): List<PageOcr> {
+    suspend fun readPages(context: Context, pages: List<File>, lang: OcrLang, onPage: (Int) -> Unit = {}): List<PageOcr> {
+        // Tesseract is slow CPU work: keep it off the screen's thread.
+        if (lang == OcrLang.ODIA) return withContext(Dispatchers.Default) { OdiaOcr.readPages(context, pages, onPage) }
+        val hindi = lang == OcrLang.HINDI
         val recognizer = if (hindi) {
             TextRecognition.getClient(DevanagariTextRecognizerOptions.Builder().build())
         } else {

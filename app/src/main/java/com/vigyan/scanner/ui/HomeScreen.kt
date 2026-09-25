@@ -10,6 +10,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -72,6 +73,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.vigyan.scanner.BuildConfig
 import com.vigyan.scanner.Exporter
+import com.vigyan.scanner.OcrLang
 import com.vigyan.scanner.R
 import com.vigyan.scanner.Scan
 import com.vigyan.scanner.ScanViewModel
@@ -88,7 +90,8 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit, onNavigate: 
     val scans by vm.scans.collectAsStateWithLifecycle()
     val folders by vm.folders.collectAsStateWithLifecycle()
     val folder by vm.currentFolder.collectAsStateWithLifecycle()
-    val hindi by vm.hindi.collectAsStateWithLifecycle()
+    val lang by vm.lang.collectAsStateWithLifecycle()
+    val lastBackup by vm.lastBackup.collectAsStateWithLifecycle()
     val autoSort by vm.autoSort.collectAsStateWithLifecycle()
     val update by vm.update.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -177,7 +180,7 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit, onNavigate: 
                         IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, "More") }
                         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                             DropdownMenuItem(
-                                text = { Text("Text language: " + if (hindi) "English + Hindi" else "English") },
+                                text = { Text("Text language: ${lang.label}") },
                                 onClick = { menu = false; dialog = "language" },
                             )
                             DropdownMenuItem(
@@ -203,6 +206,14 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit, onNavigate: 
                             DropdownMenuItem(
                                 text = { Text("New folder") },
                                 onClick = { menu = false; dialog = "newFolder" },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("App lock (PIN)") },
+                                onClick = { menu = false; onNavigate("applock") },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Backup & restore") },
+                                onClick = { menu = false; onNavigate("backup") },
                             )
                             DropdownMenuItem(
                                 text = { Text("Check for updates (you have ${BuildConfig.VERSION_NAME})") },
@@ -236,6 +247,22 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit, onNavigate: 
                                 )
                             }
                             Button(onClick = { vm.downloadUpdate() }) { Text("Update") }
+                        }
+                    }
+                }
+            }
+            // Remind to back up once there is something worth keeping and it's been over a week.
+            if (scans.size >= 3 && System.currentTimeMillis() - lastBackup > 7L * 86_400_000L && !selecting) {
+                item {
+                    Card(Modifier.fillMaxWidth().clickable { onNavigate("backup") }, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+                        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text("💾", fontSize = 22.sp)
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text("Last backup: ${backupAge(lastBackup)}", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                                Text("Keep a copy of this phone's ${scans.size} scans in your Google Drive.", style = MaterialTheme.typography.bodySmall)
+                            }
+                            TextButton(onClick = { onNavigate("backup") }) { Text("Back up") }
                         }
                     }
                 }
@@ -386,10 +413,12 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit, onNavigate: 
             title = { Text("Text language") },
             text = {
                 Column {
-                    ChoiceRow("English", !hindi) { vm.setHindi(false); dialog = "" }
-                    ChoiceRow("English + Hindi", hindi) { vm.setHindi(true); dialog = "" }
+                    OcrLang.values().forEach { l ->
+                        ChoiceRow(l.label, lang == l) { vm.setLang(l); dialog = "" }
+                    }
                     Text(
-                        "Used for new text reading. Odia can't be read yet. To re-read an old scan, open its text and tap the refresh button.",
+                        "Used for new text reading. Odia downloads its reading data once (about 5 MB, needs internet), then works offline. " +
+                            "Odia text can be copied and saved, but an Odia PDF is not searchable. To re-read an old scan, open its text and tap refresh.",
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.padding(top = 8.dp),
                     )

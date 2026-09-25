@@ -66,7 +66,7 @@ fun TextScreen(vm: ScanViewModel, scan: Scan, onBack: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                "Check the text and correct any mistakes. It reads printed English best; handwriting and Odia/Hindi may not come out right.",
+                "Check the text and correct any mistakes. It reads clear printed text best; handwriting may not come out right. Change the language in ⋮ › Text language on the home screen.",
                 style = MaterialTheme.typography.bodySmall,
             )
             OutlinedTextField(

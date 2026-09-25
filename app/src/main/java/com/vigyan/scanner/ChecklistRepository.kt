@@ -12,10 +12,22 @@ class ChecklistRepository(context: Context) {
 
     class Data(val types: List<String>, val students: List<ChecklistStudent>)
 
-    fun load(): Data {
-        if (!file.exists()) return Data(Checklist.DEFAULT_TYPES, emptyList())
-        return try {
-            val j = JSONObject(file.readText())
+    fun load(): Data = if (file.exists()) parse(file.readText()) else Data(Checklist.DEFAULT_TYPES, emptyList())
+
+    fun save(data: Data) {
+        val students = JSONArray()
+        data.students.forEach { s ->
+            students.put(
+                JSONObject().put("id", s.id).put("name", s.name).put("mobile", s.mobile).put("class", s.klass)
+                    .put("docs", JSONObject(s.docs)),
+            )
+        }
+        file.writeText(JSONObject().put("types", JSONArray(data.types)).put("students", students).toString())
+    }
+
+    companion object {
+        fun parse(json: String): Data = try {
+            val j = JSONObject(json)
             val t = j.optJSONArray("types")
             val types = if (t != null) (0 until t.length()).map { t.getString(it) } else Checklist.DEFAULT_TYPES
             val s = j.optJSONArray("students") ?: JSONArray()
@@ -34,16 +46,5 @@ class ChecklistRepository(context: Context) {
         } catch (e: Exception) {
             Data(Checklist.DEFAULT_TYPES, emptyList())
         }
-    }
-
-    fun save(data: Data) {
-        val students = JSONArray()
-        data.students.forEach { s ->
-            students.put(
-                JSONObject().put("id", s.id).put("name", s.name).put("mobile", s.mobile).put("class", s.klass)
-                    .put("docs", JSONObject(s.docs)),
-            )
-        }
-        file.writeText(JSONObject().put("types", JSONArray(data.types)).put("students", students).toString())
     }
 }

@@ -82,6 +82,7 @@ class ScanRepository(private val context: Context) {
         val page = scan.pages[index]
         page.delete()
         ocrFile(page).delete()
+        originalOf(page).delete()
         return setPages(scan, scan.pages.filterIndexed { i, _ -> i != index })
     }
 
@@ -96,7 +97,34 @@ class ScanRepository(private val context: Context) {
         val page = scan.pages[index]
         Images.rotate(page)
         ocrFile(page).delete() // the text boxes no longer fit the turned page
+        originalOf(page).delete()
         return setPages(scan, scan.pages)
+    }
+
+    private fun originalOf(page: File) = File(page.parentFile, page.nameWithoutExtension + ".orig.jpg")
+
+    fun hasOriginal(page: File) = originalOf(page).exists()
+
+    /**
+     * Replaces a page's picture after writing on it. The very first original is kept beside it
+     * (for "Undo all changes"). The page keeps its shape, so its OCR text still lines up.
+     */
+    fun replacePage(scan: Scan, index: Int, bitmap: android.graphics.Bitmap) {
+        val page = scan.pages[index]
+        val orig = originalOf(page)
+        if (!orig.exists()) page.copyTo(orig)
+        Images.save(bitmap, page, 92)
+        setPages(scan, scan.pages)
+    }
+
+    fun restoreOriginal(scan: Scan, index: Int) {
+        val page = scan.pages[index]
+        val orig = originalOf(page)
+        if (orig.exists()) {
+            orig.copyTo(page, overwrite = true)
+            orig.delete()
+        }
+        setPages(scan, scan.pages)
     }
 
     private fun setPages(scan: Scan, pages: List<File>): Scan {
