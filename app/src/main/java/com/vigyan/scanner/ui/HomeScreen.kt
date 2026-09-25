@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
@@ -56,6 +57,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -63,6 +65,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import com.vigyan.scanner.BuildConfig
 import com.vigyan.scanner.Exporter
 import com.vigyan.scanner.R
 import com.vigyan.scanner.Scan
@@ -81,6 +84,7 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit) {
     val folders by vm.folders.collectAsStateWithLifecycle()
     val folder by vm.currentFolder.collectAsStateWithLifecycle()
     val hindi by vm.hindi.collectAsStateWithLifecycle()
+    val context = LocalContext.current
 
     var mode by rememberSaveable { mutableStateOf(ScanMode.DOCUMENT) }
     var batchPerForm by rememberSaveable { mutableStateOf(0) } // 0 = not a batch scan
@@ -160,6 +164,10 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit) {
                             DropdownMenuItem(
                                 text = { Text("New folder") },
                                 onClick = { menu = false; dialog = "newFolder" },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Share this app") },
+                                onClick = { menu = false; dialog = "shareApp" },
                             )
                         }
                     },
@@ -358,6 +366,32 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit) {
             text = { Text("They are removed from this app. Files already saved to the phone or Drive stay there.") },
             confirmButton = { TextButton(onClick = { vm.deleteMany(selected); selected = emptyList(); dialog = "" }) { Text("Delete") } },
             dismissButton = { TextButton(onClick = { dialog = "" }) { Text("Cancel") } },
+        )
+        "shareApp" -> AlertDialog(
+            onDismissRequest = { dialog = "" },
+            title = { Text("Share Vigyan Scanner") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Version ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodySmall)
+                    Button(onClick = {
+                        dialog = ""
+                        runCatching { Exporter.shareAppLink(context) }.onFailure { vm.say("Could not share: ${it.message}") }
+                    }, modifier = Modifier.fillMaxWidth()) { Text("Send download link") }
+                    Text(
+                        "Best for WhatsApp, SMS and email. The other person opens the link in Chrome and installs, and always gets the newest version.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    OutlinedButton(onClick = {
+                        dialog = ""
+                        runCatching { Exporter.shareAppFile(context) }.onFailure { vm.say("Could not share: ${it.message}") }
+                    }, modifier = Modifier.fillMaxWidth()) { Text("Send the app file (APK)") }
+                    Text(
+                        "For Quick Share / Nearby Share, Bluetooth, Google Drive or email, when there is no internet. Not for WhatsApp: it can't open app files.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            },
+            confirmButton = { TextButton(onClick = { dialog = "" }) { Text("Close") } },
         )
         "deleteFolder" -> AlertDialog(
             onDismissRequest = { dialog = "" },

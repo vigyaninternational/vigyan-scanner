@@ -200,6 +200,30 @@ object Exporter {
         context.startActivity(Intent.createChooser(sendIntent(context, files), "Share"))
     }
 
+    const val APP_LINK = "https://github.com/vigyaninternational/vigyan-scanner/releases/latest/download/VigyanScanner.apk"
+
+    /** Sends the download link: works everywhere, including WhatsApp (which can't open APK files). */
+    fun shareAppLink(context: Context) {
+        shareText(
+            context,
+            "Vigyan Scanner: scan documents to PDF, read text (OCR) and fill forms.\n\n" +
+                "Open this link in Chrome to install:\n$APP_LINK",
+        )
+    }
+
+    /** Sends this installed app's own APK file (for Bluetooth, Quick Share, Drive, email…). */
+    fun shareAppFile(context: Context) {
+        val dir = File(context.cacheDir, "apk").apply { deleteRecursively(); mkdirs() }
+        val apk = File(context.applicationInfo.sourceDir).copyTo(File(dir, "VigyanScanner.apk"), overwrite = true)
+        val uri = FileProvider.getUriForFile(context, context.packageName + ".files", apk)
+        val intent = Intent(Intent.ACTION_SEND)
+            .setType("application/vnd.android.package-archive")
+            .putExtra(Intent.EXTRA_STREAM, uri)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        intent.clipData = ClipData.newRawUri("", uri)
+        context.startActivity(Intent.createChooser(intent, "Share Vigyan Scanner app"))
+    }
+
     fun shareText(context: Context, text: String) {
         val intent = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
         context.startActivity(Intent.createChooser(intent, "Share text"))
