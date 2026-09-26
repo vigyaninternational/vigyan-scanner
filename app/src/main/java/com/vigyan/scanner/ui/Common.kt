@@ -53,8 +53,13 @@ private val Blue = Color(0xFF1E4FA3)
 private val Amber = Color(0xFFFFC107)
 
 @Composable
-fun ScannerTheme(content: @Composable () -> Unit) {
-    val colors = if (isSystemInDarkTheme()) {
+fun ScannerTheme(theme: String = "system", content: @Composable () -> Unit) {
+    val dark = when (theme) {
+        "dark" -> true
+        "light" -> false
+        else -> isSystemInDarkTheme()
+    }
+    val colors = if (dark) {
         darkColorScheme(primary = Color(0xFF9DB8F0), secondary = Amber)
     } else {
         lightColorScheme(primary = Blue, secondary = Color(0xFF7A5900))

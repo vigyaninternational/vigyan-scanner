@@ -71,7 +71,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import com.vigyan.scanner.BuildConfig
+import com.vigyan.scanner.DateRange
 import com.vigyan.scanner.Exporter
 import com.vigyan.scanner.OcrLang
 import com.vigyan.scanner.R
@@ -82,7 +86,7 @@ import java.util.Date
 import java.util.Locale
 
 /** What to open after the scanner finishes. */
-enum class ScanMode { DOCUMENT, TEXT, FILL }
+enum class ScanMode { DOCUMENT, TEXT, FILL, PERSON }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -94,6 +98,8 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit, onNavigate: 
     val lastBackup by vm.lastBackup.collectAsStateWithLifecycle()
     val autoSort by vm.autoSort.collectAsStateWithLifecycle()
     val update by vm.update.collectAsStateWithLifecycle()
+    val settings by vm.settings.collectAsStateWithLifecycle()
+    val trash by vm.trash.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     var mode by rememberSaveable { mutableStateOf(ScanMode.DOCUMENT) }
@@ -102,18 +108,32 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit, onNavigate: 
     // Selected scan ids, in the order they were tapped (that is the merge order).
     var selected by rememberSaveable { mutableStateOf(listOf<String>()) }
     var menu by rememberSaveable { mutableStateOf(false) }
-    var dialog by rememberSaveable { mutableStateOf("") } // csv, language, newFolder, batch, move, delete, deleteFolder
+    var selectMenu by rememberSaveable { mutableStateOf(false) }
+    var dialog by rememberSaveable { mutableStateOf("") } // csv, language, newFolder, batch, move, delete, deleteFolder, person…
+    var favoritesOnly by rememberSaveable { mutableStateOf(false) }
+    var dateRange by rememberSaveable { mutableStateOf(DateRange.ANY) }
+    var showTrash by rememberSaveable { mutableStateOf(false) }
+    var trashPick by rememberSaveable { mutableStateOf("") } // scan id tapped in the Recycle bin
+    var report by rememberSaveable { mutableStateOf("") }
+    // Scan & merge by name: the person being scanned for.
+    var personName by rememberSaveable { mutableStateOf("") }
+    var personRef by rememberSaveable { mutableStateOf("") }
 
     val startScanner = rememberScanner(onError = vm::say) { pages ->
-        if (batchPerForm > 0) {
-            vm.batchFill(pages, batchPerForm) {}
-            batchPerForm = 0
-        } else {
-            vm.saveNewScan(pages, sort = mode == ScanMode.DOCUMENT) { onOpen(it, mode) }
+        when {
+            batchPerForm > 0 -> {
+                vm.batchFill(pages, batchPerForm) {}
+                batchPerForm = 0
+            }
+            mode == ScanMode.PERSON -> vm.newNamedSession(pages, personName, personRef, imported = false) { onOpen(it, ScanMode.PERSON) }
+            else -> vm.saveNewScan(pages, sort = mode == ScanMode.DOCUMENT) { onOpen(it, mode) }
         }
     }
     val importPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) vm.importUris(uris) { onOpen(it, ScanMode.DOCUMENT) }
+    }
+    val personImport = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) vm.newNamedSession(uris, personName, personRef, imported = true) { onOpen(it, ScanMode.PERSON) }
     }
 
     // Resize for portal: pick a photo/PDF, then open it with the resize dialog showing.
@@ -144,13 +164,19 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit, onNavigate: 
         startScanner(if (m == ScanMode.FILL) 5 else 100)
     }
 
-    val inFolder = scans.filter { folder == null || it.folder == folder }
+    val source = if (showTrash) trash else scans
+    val inFolder = source.filter { showTrash || folder == null || it.folder == folder }
     val q = query.trim().lowercase()
-    val shown = if (q.isEmpty()) inFolder else inFolder.filter { s ->
-        s.name.lowercase().contains(q) || s.text?.lowercase()?.contains(q) == true ||
-            s.fields.values.any { it.lowercase().contains(q) }
+    val shown = inFolder.filter { s ->
+        (!favoritesOnly || showTrash || s.favorite) && (showTrash || dateRange.matches(s.created)) &&
+            (
+                q.isEmpty() || s.name.lowercase().contains(q) || s.text?.lowercase()?.contains(q) == true ||
+                    s.person.lowercase().contains(q) || s.ref.lowercase().contains(q) || s.folder.lowercase().contains(q) ||
+                    s.fields.values.any { it.lowercase().contains(q) }
+                )
     }
     val selecting = selected.isNotEmpty()
+    val filtering = q.isNotEmpty() || favoritesOnly || dateRange != DateRange.ANY || showTrash
 
     Scaffold(
         topBar = {
@@ -164,6 +190,21 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit, onNavigate: 
                         }, enabled = selected.size >= 2) { Text("Merge") }
                         TextButton(onClick = { dialog = "move" }) { Text("Folder") }
                         TextButton(onClick = { dialog = "delete" }) { Text("Delete") }
+                        IconButton(onClick = { selectMenu = true }) { Icon(Icons.Default.MoreVert, "More") }
+                        DropdownMenu(expanded = selectMenu, onDismissRequest = { selectMenu = false }) {
+                            DropdownMenuItem(text = { Text("★ Add to favourites") }, onClick = {
+                                selectMenu = false; vm.setFavorite(selected, true); selected = emptyList()
+                            })
+                            DropdownMenuItem(text = { Text("☆ Remove from favourites") }, onClick = {
+                                selectMenu = false; vm.setFavorite(selected, false); selected = emptyList()
+                            })
+                            DropdownMenuItem(text = { Text("Make a copy") }, onClick = {
+                                selectMenu = false; vm.copyScans(selected); selected = emptyList()
+                            })
+                            DropdownMenuItem(text = { Text("Rename all (Name 1, Name 2…)") }, onClick = {
+                                selectMenu = false; dialog = "bulkRename"
+                            })
+                        }
                     },
                 )
             } else {
@@ -185,6 +226,18 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit, onNavigate: 
                     actions = {
                         IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, "More") }
                         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                            DropdownMenuItem(
+                                text = { Text("⚙ Settings") },
+                                onClick = { menu = false; onNavigate("settings") },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("🗑 Recycle bin (${trash.size})") },
+                                onClick = { menu = false; showTrash = true; selected = emptyList() },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Storage used") },
+                                onClick = { menu = false; vm.storageReport { report = it; dialog = "storage" } },
+                            )
                             DropdownMenuItem(
                                 text = { Text("Text language: ${lang.label}") },
                                 onClick = { menu = false; dialog = "language" },
@@ -257,8 +310,30 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit, onNavigate: 
                     }
                 }
             }
-            // Remind to back up once there is something worth keeping and it's been over a week.
-            if (scans.size >= 3 && System.currentTimeMillis() - lastBackup > 7L * 86_400_000L && !selecting) {
+            if (showTrash) {
+                item {
+                    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
+                        Column(Modifier.padding(12.dp)) {
+                            Text("🗑 Recycle bin", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                            Text(
+                                "Deleted scans stay here for ${com.vigyan.scanner.ScanRepository.TRASH_DAYS} days, then go for good. Tap one to restore it.",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                TextButton(onClick = { showTrash = false }) { Text("← Back to scans") }
+                                if (trash.isNotEmpty()) {
+                                    TextButton(onClick = { vm.restoreFromTrash(trash.map { it.id }) }) { Text("Restore all") }
+                                    TextButton(onClick = { dialog = "emptyTrash" }) { Text("Empty bin") }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // Remind to back up once there is something worth keeping and it's been a while.
+            if (!showTrash && settings.backupDays > 0 && scans.size >= 3 &&
+                System.currentTimeMillis() - lastBackup > settings.backupDays * 86_400_000L && !selecting
+            ) {
                 item {
                     Card(Modifier.fillMaxWidth().clickable { onNavigate("backup") }, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
                         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -273,7 +348,7 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit, onNavigate: 
                     }
                 }
             }
-            if (q.isEmpty() && folder == null && !selecting) {
+            if (!filtering && folder == null && !selecting) {
                 item {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Image(
@@ -294,6 +369,13 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit, onNavigate: 
                         "Camera stays open. Tap, press volume, or let Auto snap each page as you turn it.",
                         "⚡", CardCyan, Modifier.fillMaxWidth(),
                     ) { onNavigate("quickscan") }
+                }
+                item {
+                    ActionCard(
+                        "Scan & merge by name",
+                        "One person's 10th, +2, CLC, Aadhaar… → one PDF named after them (RAHUL_KUMAR.pdf)",
+                        "👤", CardRose, Modifier.fillMaxWidth(),
+                    ) { personName = ""; personRef = ""; dialog = "person" }
                 }
                 item {
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -335,7 +417,7 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit, onNavigate: 
                     onValueChange = { query = it },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
-                    placeholder = { Text("Search names and text in all scans") },
+                    placeholder = { Text("Search names, ref. numbers and text") },
                     leadingIcon = { Icon(Icons.Default.Search, null) },
                     trailingIcon = {
                         if (query.isNotEmpty()) IconButton(onClick = { query = "" }) { Icon(Icons.Default.Clear, "Clear") }
@@ -343,9 +425,23 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit, onNavigate: 
                 )
             }
 
-            item {
+            if (!showTrash) item {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    item { FilterChip(selected = folder == null, onClick = { vm.showFolder(null) }, label = { Text("All (${scans.size})") }) }
+                    items(DateRange.values().toList()) { r ->
+                        FilterChip(selected = dateRange == r, onClick = { dateRange = r }, label = { Text(r.label) })
+                    }
+                }
+            }
+            if (!showTrash) item {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    item { FilterChip(selected = folder == null && !favoritesOnly, onClick = { vm.showFolder(null); favoritesOnly = false }, label = { Text("All (${scans.size})") }) }
+                    item {
+                        FilterChip(
+                            selected = favoritesOnly,
+                            onClick = { favoritesOnly = !favoritesOnly },
+                            label = { Text("★ Favourites (${scans.count { it.favorite }})") },
+                        )
+                    }
                     items(folders) { f ->
                         FilterChip(
                             selected = folder == f,
@@ -357,7 +453,7 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit, onNavigate: 
                 }
             }
 
-            folder?.let { f ->
+            folder?.takeIf { !showTrash }?.let { f ->
                 item {
                     Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
                         Column(Modifier.padding(12.dp)) {
@@ -374,7 +470,9 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit, onNavigate: 
             item {
                 Text(
                     when {
+                        showTrash -> if (shown.isEmpty()) "The Recycle bin is empty." else "${shown.size} deleted scan(s)"
                         q.isNotEmpty() -> "${shown.size} scan(s) match \"${query.trim()}\""
+                        shown.isEmpty() && filtering -> "No scans match these filters."
                         shown.isEmpty() -> "No scans here yet. Tip: press and hold a scan to select several (merge, move, delete)."
                         else -> "Scans (${shown.size}) · press and hold to select"
                     },
@@ -389,10 +487,13 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit, onNavigate: 
                     selectedNumber = if (order >= 0) order + 1 else 0,
                     selecting = selecting,
                     onClick = {
-                        if (selecting) selected = if (order >= 0) selected - s.id else selected + s.id
-                        else onOpen(s, ScanMode.DOCUMENT)
+                        when {
+                            showTrash -> { trashPick = s.id; dialog = "trashItem" }
+                            selecting -> selected = if (order >= 0) selected - s.id else selected + s.id
+                            else -> onOpen(s, ScanMode.DOCUMENT)
+                        }
                     },
-                    onLongClick = { if (order < 0) selected = selected + s.id },
+                    onLongClick = { if (!showTrash && order < 0) selected = selected + s.id },
                 )
             }
         }
@@ -400,21 +501,26 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit, onNavigate: 
 
     when (dialog) {
         "csv" -> {
-            val forms = inFolder.filter { it.fields.isNotEmpty() }
+            val forms = scans.filter { (folder == null || it.folder == folder) && it.fields.isNotEmpty() }
+            var excel by rememberSaveable { mutableStateOf(false) }
             AlertDialog(
                 onDismissRequest = { dialog = "" },
                 title = { Text("Export filled forms") },
                 text = {
                     Column {
                         Text(
-                            "One CSV with a row for each of the ${forms.size} filled form(s) " +
+                            "One sheet with a row for each of the ${forms.size} filled form(s) " +
                                 (folder?.let { "in \"$it\"" } ?: "in all scans") +
-                                ". It opens in Excel or Google Sheets, and its columns match the Vigyan ERP student import.",
-                            modifier = Modifier.padding(bottom = 12.dp),
+                                ". Its columns match the Vigyan ERP student import.",
+                            modifier = Modifier.padding(bottom = 8.dp),
                         )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 8.dp)) {
+                            FilterChip(selected = !excel, onClick = { excel = false }, label = { Text("CSV (ERP import)") })
+                            FilterChip(selected = excel, onClick = { excel = true }, label = { Text("Excel (.xlsx)") })
+                        }
                         SendButtons(onDenied = { vm.say("Storage permission is needed to save to the phone") }) { target ->
                             dialog = ""
-                            vm.exportForms(forms, Exporter.csvName(folder ?: "Filled forms"), target)
+                            vm.exportForms(forms, Exporter.csvName(folder ?: "Filled forms"), target, excel = excel)
                         }
                     }
                 },
@@ -480,10 +586,115 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit, onNavigate: 
             onPick = { f -> vm.moveToFolder(selected, f); selected = emptyList(); dialog = "" },
             onDismiss = { dialog = "" },
         )
+        "person" -> AlertDialog(
+            onDismissRequest = { dialog = "" },
+            title = { Text("Scan & merge by name") },
+            text = {
+                Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        personName, { personName = it },
+                        label = { Text("Name, e.g. Rahul Kumar") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        personRef, { personRef = it },
+                        label = { Text("Reference no. (optional)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    if (personName.isNotBlank()) {
+                        Text(
+                            "Saved as ${com.vigyan.scanner.Naming.personFile(personName, personRef)}.pdf (you can change it before saving).",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    if (settings.docOrderList.isNotEmpty()) {
+                        Text(
+                            "Suggested order: " + settings.docOrderList.joinToString(" → ") +
+                                ". Any other documents are fine too. Change the order in ⚙ Settings.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    Text("Scan all their documents with:", style = MaterialTheme.typography.titleSmall)
+                    val ok = personName.isNotBlank()
+                    Button(onClick = {
+                        dialog = ""
+                        onNavigate(
+                            "quickscan?name=" + android.net.Uri.encode(personName.trim()) +
+                                "&ref=" + android.net.Uri.encode(personRef.trim()),
+                        )
+                    }, enabled = ok, modifier = Modifier.fillMaxWidth()) { Text("⚡ Quick scan (fast, many pages)") }
+                    OutlinedButton(onClick = {
+                        dialog = ""; mode = ScanMode.PERSON; batchPerForm = 0; startScanner(100)
+                    }, enabled = ok, modifier = Modifier.fillMaxWidth()) { Text("📄 Document scanner (auto crop)") }
+                    OutlinedButton(onClick = {
+                        dialog = ""; personImport.launch(arrayOf("image/*", "application/pdf"))
+                    }, enabled = ok, modifier = Modifier.fillMaxWidth()) { Text("📂 Photos / PDFs already on the phone") }
+                    Text(
+                        "Then arrange, crop or delete pages, add more any time (even later), and tap Save. No student record is made.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            },
+            confirmButton = { TextButton(onClick = { dialog = "" }) { Text("Cancel") } },
+        )
+        "bulkRename" -> {
+            var base by rememberSaveable { mutableStateOf("") }
+            AlertDialog(
+                onDismissRequest = { dialog = "" },
+                title = { Text("Rename ${selected.size} scan(s)") },
+                text = {
+                    Column {
+                        OutlinedTextField(base, { base = it }, singleLine = true, label = { Text("New name, e.g. Admission XI") })
+                        Text(
+                            if (selected.size > 1) "They become \"${base.ifBlank { "Name" }} 1\", \"${base.ifBlank { "Name" }} 2\"… in the order you tapped them."
+                            else "",
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(top = 6.dp),
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { vm.bulkRename(selected, base); selected = emptyList(); dialog = "" }, enabled = base.isNotBlank()) {
+                        Text("Rename")
+                    }
+                },
+                dismissButton = { TextButton(onClick = { dialog = "" }) { Text("Cancel") } },
+            )
+        }
+        "storage" -> AlertDialog(
+            onDismissRequest = { dialog = "" },
+            title = { Text("Storage used") },
+            text = { Text(report) },
+            confirmButton = { TextButton(onClick = { dialog = "" }) { Text("Close") } },
+            dismissButton = {
+                TextButton(onClick = { dialog = ""; vm.clearTemporaryFiles() }) { Text("Clear temporary files") }
+            },
+        )
+        "trashItem" -> {
+            val s = trash.firstOrNull { it.id == trashPick }
+            if (s != null) {
+                AlertDialog(
+                    onDismissRequest = { dialog = "" },
+                    title = { Text(s.name) },
+                    text = { Text("${s.pages.size} page(s). Restore it to your scans, or delete it for good?") },
+                    confirmButton = { TextButton(onClick = { vm.restoreFromTrash(listOf(s.id)); dialog = "" }) { Text("Restore") } },
+                    dismissButton = { TextButton(onClick = { vm.deleteForever(listOf(s.id)); dialog = "" }) { Text("Delete for good") } },
+                )
+            }
+        }
+        "emptyTrash" -> AlertDialog(
+            onDismissRequest = { dialog = "" },
+            title = { Text("Empty the Recycle bin?") },
+            text = { Text("${trash.size} scan(s) will be deleted for good. This can't be undone.") },
+            confirmButton = { TextButton(onClick = { vm.emptyTrash(); dialog = "" }) { Text("Delete for good") } },
+            dismissButton = { TextButton(onClick = { dialog = "" }) { Text("Cancel") } },
+        )
         "delete" -> AlertDialog(
             onDismissRequest = { dialog = "" },
             title = { Text("Delete ${selected.size} scan(s)?") },
-            text = { Text("They are removed from this app. Files already saved to the phone or Drive stay there.") },
+            text = { Text("They go to the Recycle bin (⋮ menu) for ${com.vigyan.scanner.ScanRepository.TRASH_DAYS} days, so you can still restore them. Files already saved to the phone or Drive stay there.") },
             confirmButton = { TextButton(onClick = { vm.deleteMany(selected); selected = emptyList(); dialog = "" }) { Text("Delete") } },
             dismissButton = { TextButton(onClick = { dialog = "" }) { Text("Cancel") } },
         )
@@ -597,6 +808,7 @@ private val CardOrange = listOf(Color(0xFFBF360C), Color(0xFFFF7043))
 private val CardGreen = listOf(Color(0xFF1B5E20), Color(0xFF43A047))
 private val CardAmber = listOf(Color(0xFFE65100), Color(0xFFFFA000))
 private val CardCyan = listOf(Color(0xFF004D60), Color(0xFF0097A7))
+private val CardRose = listOf(Color(0xFF880E4F), Color(0xFF5E35B1))
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -626,7 +838,8 @@ private fun ScanRow(
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(
-                    (if (selectedNumber > 0) "$selectedNumber. " else "") + scan.name,
+                    (if (selectedNumber > 0) "$selectedNumber. " else "") + (if (scan.favorite) "★ " else "") +
+                        (if (scan.person.isNotEmpty()) "👤 " else "") + scan.name,
                     style = MaterialTheme.typography.titleMedium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,

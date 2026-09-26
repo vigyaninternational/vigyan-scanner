@@ -55,6 +55,28 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.layout.Box
+import androidx.compose.material3.Button
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import com.vigyan.scanner.Exporter
+import com.vigyan.scanner.Naming
+import com.vigyan.scanner.PageFilter
+import com.vigyan.scanner.PageSize
+import java.io.File
 import com.vigyan.scanner.ExportOptions
 import com.vigyan.scanner.Format
 import com.vigyan.scanner.PortalSpec
@@ -77,7 +99,15 @@ fun DetailScreen(
 ) {
     val folders by vm.folders.collectAsStateWithLifecycle()
     val brandingVersion by vm.brandingVersion.collectAsStateWithLifecycle()
-    var dialog by rememberSaveable { mutableStateOf(if (openResize) "resize" else "") } // rename, delete, folder, deletePage, resize
+    val settings by vm.settings.collectAsStateWithLifecycle()
+    // rename, delete, folder, deletePage, resize, filter, split, addPages, view, person
+    var dialog by rememberSaveable { mutableStateOf(if (openResize) "resize" else "") }
+    var pageIndex by rememberSaveable { mutableStateOf(0) } // page for the filter / viewer dialogs
+    var fileName by rememberSaveable(scan.id, scan.name, scan.person, scan.ref) { mutableStateOf(vm.suggestFileName(scan)) }
+    var pageNumbers by rememberSaveable { mutableStateOf(false) }
+    var pageSize by rememberSaveable { mutableStateOf(PageSize.FIT) }
+    var somePages by rememberSaveable { mutableStateOf(false) }
+    var chosenPages by rememberSaveable(scan.id, scan.pages.size) { mutableStateOf(scan.pages.indices.toList()) }
     var attested by rememberSaveable { mutableStateOf(false) }
     var seal by rememberSaveable { mutableStateOf(false) }
     var signature by rememberSaveable { mutableStateOf(false) }
@@ -87,7 +117,7 @@ fun DetailScreen(
     var pdf by rememberSaveable { mutableStateOf(true) }
     var jpg by rememberSaveable { mutableStateOf(false) }
     var txt by rememberSaveable { mutableStateOf(false) }
-    var quality by rememberSaveable { mutableStateOf(Quality.NORMAL) }
+    var quality by rememberSaveable { mutableStateOf(settings.quality) }
     var searchable by rememberSaveable { mutableStateOf(true) }
     var idCard by rememberSaveable { mutableStateOf(false) }
     var lock by rememberSaveable { mutableStateOf(false) }
@@ -95,6 +125,25 @@ fun DetailScreen(
     var showPassword by rememberSaveable { mutableStateOf(false) }
 
     val addPages = rememberScanner(onError = vm::say) { uris -> vm.addPages(scan, uris) }
+    val importPages = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) vm.appendPages(scan, uris, imported = true)
+    }
+
+    fun options(formats: Set<Format>, forPrint: Boolean = false) = ExportOptions(
+        formats = formats,
+        quality = quality,
+        searchable = searchable,
+        idCard = idCard,
+        password = password.takeIf { lock && it.isNotEmpty() && !forPrint },
+        attested = attested,
+        seal = seal && vm.branding.hasSeal(),
+        signature = signature && vm.branding.hasSignature(),
+        letterPad = letterPad,
+        pageNumbers = pageNumbers,
+        pageSize = pageSize,
+        fileName = fileName.takeIf { it.isNotBlank() },
+        pages = chosenPages.takeIf { somePages },
+    )
 
     Scaffold(
         topBar = {
@@ -102,6 +151,9 @@ fun DetailScreen(
                 title = { Text(scan.name, maxLines = 1) },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
                 actions = {
+                    IconButton(onClick = { vm.toggleFavorite(scan) }) {
+                        Text(if (scan.favorite) "★" else "☆", fontSize = 22.sp, color = if (scan.favorite) Color(0xFFFFB300) else LocalContentColor.current)
+                    }
                     IconButton(onClick = { dialog = "rename" }) { Icon(Icons.Default.Edit, "Rename") }
                     IconButton(onClick = { dialog = "delete" }) { Icon(Icons.Default.Delete, "Delete") }
                 },
@@ -112,6 +164,28 @@ fun DetailScreen(
             Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            if (scan.person.isNotEmpty()) {
+                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
+                    Column(Modifier.padding(12.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("👤", fontSize = 26.sp)
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(scan.person, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                Text(
+                                    (if (scan.ref.isNotEmpty()) "Ref. ${scan.ref} · " else "") + "${scan.pages.size} page(s)",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                            TextButton(onClick = { dialog = "person" }) { Text("Edit") }
+                        }
+                        Text(
+                            "Arrange the pages below (◀ ▶), add more any time, then Save as one PDF: ${Naming.personFile(scan.person, scan.ref)}.pdf",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+            }
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 itemsIndexed(scan.pages, key = { _, page -> page.name + page.lastModified() }) { i, page ->
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -121,27 +195,31 @@ fun DetailScreen(
                             contentDescription = "Page ${i + 1}",
                             contentScale = ContentScale.Fit,
                             modifier = Modifier.height(280.dp).width(200.dp)
-                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                                .clickable { pageIndex = i; dialog = "view" },
                         )
                         Text("Page ${i + 1} of ${scan.pages.size}", style = MaterialTheme.typography.labelMedium)
                         Row {
                             SmallButton("◀", enabled = i > 0) { vm.movePage(scan, i, i - 1) }
                             SmallButton("⟳") { vm.rotatePage(scan, i) }
                             SmallButton("⛶") { onTool("crop/${scan.id}/$i") }
+                            SmallButton("▶", enabled = i < scan.pages.size - 1) { vm.movePage(scan, i, i + 1) }
+                        }
+                        Row {
+                            SmallButton("🎨") { pageIndex = i; dialog = "filter" }
                             SmallButton("✏") { onTool("annotate/${scan.id}/$i") }
                             SmallButton("✕", enabled = scan.pages.size > 1) { pageToDelete = i; dialog = "deletePage" }
-                            SmallButton("▶", enabled = i < scan.pages.size - 1) { vm.movePage(scan, i, i + 1) }
                         }
                     }
                 }
             }
             Text(
-                "◀ ▶ move · ⟳ turn · ⛶ adjust corners / straighten · ✏ write, highlight or sign · ✕ delete",
+                "Tap a page to see it large · ◀ ▶ move · ⟳ turn · ⛶ crop / straighten · 🎨 black & white, remove shadows · ✏ write or sign · ✕ delete",
                 style = MaterialTheme.typography.bodySmall,
             )
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { addPages(100) }, modifier = Modifier.weight(1f)) { Text("+ Add pages") }
+                OutlinedButton(onClick = { dialog = "addPages" }, modifier = Modifier.weight(1f)) { Text("+ Add pages") }
                 OutlinedButton(onClick = { dialog = "folder" }, modifier = Modifier.weight(1f)) {
                     Text(if (scan.folder.isEmpty()) "Folder: none" else "Folder: ${scan.folder}", maxLines = 1)
                 }
@@ -164,10 +242,24 @@ fun DetailScreen(
                     modifier = Modifier.weight(1f),
                 ) { Text("Cut out signature", maxLines = 1) }
             }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilledTonalButton(onClick = { dialog = "split" }, enabled = scan.pages.size > 1, modifier = Modifier.weight(1f)) {
+                    Text("Split / extract pages", maxLines = 1)
+                }
+                FilledTonalButton(onClick = { dialog = "excel" }, modifier = Modifier.weight(1f)) { Text("Scan to Excel", maxLines = 1) }
+            }
 
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
                     Text("Save or upload as", style = MaterialTheme.typography.titleMedium)
+                    OutlinedTextField(
+                        value = fileName,
+                        onValueChange = { fileName = it },
+                        label = { Text("File name") },
+                        singleLine = true,
+                        supportingText = { Text(if (pdf) "${Exporter.safeName(fileName.ifBlank { scan.name })}.pdf" else "") },
+                        modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                    )
                     CheckRow("PDF", pdf) { pdf = it }
                     CheckRow("JPG images (one per page)", jpg) { jpg = it }
                     CheckRow("Text file (.txt)", txt) { txt = it }
@@ -180,8 +272,27 @@ fun DetailScreen(
                     }
                     Text(quality.hint, style = MaterialTheme.typography.bodySmall)
 
+                    if (scan.pages.size > 1) {
+                        Text("Pages", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            FilterChip(selected = !somePages, onClick = { somePages = false }, label = { Text("All ${scan.pages.size}") })
+                            FilterChip(selected = somePages, onClick = { somePages = true }, label = { Text("Only some") })
+                        }
+                        if (somePages) {
+                            PagePicker(scan.pages.size, chosenPages) { chosenPages = it }
+                        }
+                    }
+
                     if (pdf) {
                         Text("PDF options", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
+                        if (!idCard && !letterPad) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                                PageSize.values().forEach { p ->
+                                    FilterChip(selected = pageSize == p, onClick = { pageSize = p }, label = { Text(p.label) })
+                                }
+                            }
+                        }
+                        CheckRow("Page numbers (Page 1 of 5)", pageNumbers) { pageNumbers = it }
                         CheckRow("Searchable: you can find and copy text in the PDF", searchable) { searchable = it }
                         CheckRow("ID card: pages at real card size on one A4 sheet (Aadhaar front + back)", idCard) { idCard = it }
                         CheckRow("Lock with a password", lock) { lock = it }
@@ -231,27 +342,22 @@ fun DetailScreen(
                         if (txt) add(Format.TXT)
                     }
                     val passwordOk = !pdf || !lock || (password.isNotEmpty() && password.all { it.code in 32..126 })
+                    val pagesOk = !somePages || chosenPages.isNotEmpty()
                     Column(Modifier.padding(top = 8.dp)) {
                         SendButtons(
-                            enabled = formats.isNotEmpty() && passwordOk,
+                            enabled = formats.isNotEmpty() && passwordOk && pagesOk,
                             onDenied = { vm.say("Storage permission is needed to save to the phone") },
-                        ) { target ->
-                            val options = ExportOptions(
-                                formats = formats,
-                                quality = quality,
-                                searchable = searchable,
-                                idCard = idCard,
-                                password = password.takeIf { lock && it.isNotEmpty() },
-                                attested = attested,
-                                seal = seal && vm.branding.hasSeal(),
-                                signature = signature && vm.branding.hasSignature(),
-                                letterPad = letterPad,
-                            )
-                            vm.export(scan, options, target)
-                        }
+                        ) { target -> vm.export(scan, options(formats), target) }
+                        OutlinedButton(
+                            onClick = { vm.export(scan, options(setOf(Format.PDF), forPrint = true), ScanViewModel.Target.PRINT) },
+                            enabled = pagesOk,
+                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        ) { Text("🖨 Print") }
                     }
                     Text(
-                        "Save to phone puts files in Download/Vigyan Scanner. Google Drive opens Drive so you can pick the account and folder.",
+                        "Save to phone puts files in " +
+                            (settings.saveTree?.let { Exporter.treeLabel(android.net.Uri.parse(it)) } ?: "Download/Vigyan Scanner") +
+                            " (change it in ⚙ Settings). Google Drive opens Drive so you can pick the account and folder.",
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.padding(top = 8.dp),
                     )
@@ -274,7 +380,7 @@ fun DetailScreen(
         "delete" -> AlertDialog(
             onDismissRequest = { dialog = "" },
             title = { Text("Delete this scan?") },
-            text = { Text("It is removed from this app. Files you already saved to the phone or Drive stay there.") },
+            text = { Text("It goes to the Recycle bin (home ⋮ menu) for 30 days, so you can still restore it. Files you already saved to the phone or Drive stay there.") },
             confirmButton = { TextButton(onClick = { dialog = ""; vm.delete(scan); onBack() }) { Text("Delete") } },
             dismissButton = { TextButton(onClick = { dialog = "" }) { Text("Cancel") } },
         )
@@ -290,6 +396,118 @@ fun DetailScreen(
             dismissButton = { TextButton(onClick = { dialog = "" }) { Text("Cancel") } },
         )
         "resize" -> ResizeDialog(vm, scan, onDismiss = { dialog = "" })
+        "view" -> scan.pages.getOrNull(pageIndex)?.let { page ->
+            PageViewer(page, "Page ${pageIndex + 1} of ${scan.pages.size}", onDismiss = { dialog = "" })
+        }
+        "filter" -> {
+            var all by rememberSaveable { mutableStateOf(false) }
+            val page = scan.pages.getOrNull(pageIndex)
+            AlertDialog(
+                onDismissRequest = { dialog = "" },
+                title = { Text("Page look") },
+                text = {
+                    Column {
+                        CheckRow(if (all) "All ${scan.pages.size} pages" else "Page ${pageIndex + 1} only (tick for all pages)", all) { all = it }
+                        PageFilter.values().forEach { f ->
+                            Column(
+                                Modifier.fillMaxWidth().clickable {
+                                    dialog = ""
+                                    vm.applyFilter(scan, if (all) scan.pages.indices.toList() else listOf(pageIndex), f)
+                                }.padding(vertical = 8.dp),
+                            ) {
+                                Text(f.label, style = MaterialTheme.typography.titleSmall)
+                                Text(f.hint, style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                        if (page != null && vm.hasOriginal(page)) {
+                            TextButton(onClick = { dialog = ""; vm.restoreOriginalPage(scan, pageIndex) }) {
+                                Text("↩ Back to the original page (undoes all changes)")
+                            }
+                        }
+                    }
+                },
+                confirmButton = { TextButton(onClick = { dialog = "" }) { Text("Cancel") } },
+            )
+        }
+        "addPages" -> AlertDialog(
+            onDismissRequest = { dialog = "" },
+            title = { Text("Add pages") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("New pages go at the end; move them with ◀ ▶.", style = MaterialTheme.typography.bodySmall)
+                    Button(onClick = { dialog = ""; onTool("quickscan?append=${scan.id}") }, modifier = Modifier.fillMaxWidth()) {
+                        Text("⚡ Quick scan (fast, many pages)")
+                    }
+                    OutlinedButton(onClick = { dialog = ""; addPages(100) }, modifier = Modifier.fillMaxWidth()) {
+                        Text("📄 Document scanner (auto crop)")
+                    }
+                    OutlinedButton(onClick = { dialog = ""; importPages.launch(arrayOf("image/*", "application/pdf")) }, modifier = Modifier.fillMaxWidth()) {
+                        Text("📂 Photos / PDFs on the phone")
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { dialog = "" }) { Text("Cancel") } },
+        )
+        "split" -> {
+            var picked by rememberSaveable { mutableStateOf(listOf<Int>()) }
+            AlertDialog(
+                onDismissRequest = { dialog = "" },
+                title = { Text("Split / extract pages") },
+                text = {
+                    Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState())) {
+                        Text("Tap the pages to take out, in the order you want them. The original scan is kept.", style = MaterialTheme.typography.bodySmall)
+                        PagePicker(scan.pages.size, picked) { picked = it }
+                        Button(
+                            onClick = { dialog = ""; vm.extractPages(scan, picked, oneEach = false) { it?.let { s -> onTool("scan/${s.id}") } } },
+                            enabled = picked.isNotEmpty(),
+                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                        ) { Text("Make a new scan of ${picked.size} page(s)") }
+                        OutlinedButton(
+                            onClick = { dialog = ""; vm.extractPages(scan, scan.pages.indices.toList(), oneEach = true) {} },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text("Split every page into its own scan (${scan.pages.size})") }
+                    }
+                },
+                confirmButton = { TextButton(onClick = { dialog = "" }) { Text("Cancel") } },
+            )
+        }
+        "excel" -> AlertDialog(
+            onDismissRequest = { dialog = "" },
+            title = { Text("Scan to Excel") },
+            text = {
+                Column {
+                    Text(
+                        "Reads the text and puts each line in a row, and each separate piece of text on the line in its own column " +
+                            "(good for tables and lists). One sheet per page. Check it in Excel or Sheets: reading can make mistakes.",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(bottom = 8.dp),
+                    )
+                    SendButtons(onDenied = { vm.say("Storage permission is needed to save to the phone") }) { target ->
+                        dialog = ""
+                        vm.exportExcel(scan, target)
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { dialog = "" }) { Text("Close") } },
+        )
+        "person" -> {
+            var person by rememberSaveable { mutableStateOf(scan.person) }
+            var ref by rememberSaveable { mutableStateOf(scan.ref) }
+            AlertDialog(
+                onDismissRequest = { dialog = "" },
+                title = { Text("Name & reference") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(person, { person = it }, singleLine = true, label = { Text("Name") })
+                        OutlinedTextField(ref, { ref = it }, singleLine = true, label = { Text("Reference no. (optional)") })
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { dialog = ""; vm.setPerson(scan, person, ref) }, enabled = person.isNotBlank()) { Text("Save") }
+                },
+                dismissButton = { TextButton(onClick = { dialog = "" }) { Text("Cancel") } },
+            )
+        }
         "folder" -> FolderDialog(
             folders = folders,
             current = scan.folder,
@@ -309,6 +527,57 @@ private fun CheckRow(label: String, checked: Boolean, onChange: (Boolean) -> Uni
     Row(verticalAlignment = Alignment.CenterVertically) {
         Checkbox(checked = checked, onCheckedChange = onChange)
         Text(label)
+    }
+}
+
+/** Page number chips; tapping adds or removes a page, and the order of tapping is kept. */
+@Composable
+private fun PagePicker(count: Int, picked: List<Int>, onChange: (List<Int>) -> Unit) {
+    Row(Modifier.horizontalScroll(rememberScrollState()).padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        (0 until count).forEach { i ->
+            val order = picked.indexOf(i)
+            FilterChip(
+                selected = order >= 0,
+                onClick = { onChange(if (order >= 0) picked - i else picked + i) },
+                label = { Text(if (order >= 0 && picked != (0 until count).toList()) "${i + 1} (#${order + 1})" else "${i + 1}") },
+            )
+        }
+    }
+}
+
+/** A page full screen; pinch to zoom, drag to move. */
+@Composable
+private fun PageViewer(page: File, title: String, onDismiss: () -> Unit) {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        var scale by remember { mutableFloatStateOf(1f) }
+        var offset by remember { mutableStateOf(Offset.Zero) }
+        Box(
+            Modifier.fillMaxSize().background(Color.Black).pointerInput(Unit) {
+                detectTransformGestures { _, pan, zoom, _ ->
+                    scale = (scale * zoom).coerceIn(1f, 6f)
+                    offset = if (scale == 1f) Offset.Zero else offset + pan
+                }
+            },
+        ) {
+            AsyncImage(
+                model = ImageRequest.Builder(LocalContext.current).data(page).memoryCacheKey(page.path + page.lastModified()).build(),
+                contentDescription = title,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize().graphicsLayer {
+                    scaleX = scale
+                    scaleY = scale
+                    translationX = offset.x
+                    translationY = offset.y
+                },
+            )
+            Row(
+                Modifier.align(Alignment.TopStart).fillMaxWidth().background(Color.Black.copy(alpha = 0.5f)).padding(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(title, color = Color.White, modifier = Modifier.weight(1f).padding(start = 8.dp))
+                TextButton(onClick = onDismiss) { Text("Close", color = Color.White) }
+            }
+        }
     }
 }
 

@@ -14,6 +14,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -42,6 +43,7 @@ fun TextScreen(vm: ScanViewModel, scan: Scan, onBack: () -> Unit) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     var text by rememberSaveable(scan.id) { mutableStateOf(scan.text.orEmpty()) }
+    var excel by rememberSaveable { mutableStateOf(false) }
 
     // First visit: read the text now.
     LaunchedEffect(scan.id) {
@@ -83,11 +85,21 @@ fun TextScreen(vm: ScanViewModel, scan: Scan, onBack: () -> Unit) {
                 FilledTonalButton(onClick = { vm.saveText(scan, text) }, modifier = Modifier.weight(1f)) { Text("Save edits") }
                 FilledTonalButton(onClick = { Exporter.shareText(context, text) }, modifier = Modifier.weight(1f)) { Text("Send") }
             }
-            Text("Save as .txt file", style = MaterialTheme.typography.titleMedium)
+            Text("Save as a file", style = MaterialTheme.typography.titleMedium)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(selected = !excel, onClick = { excel = false }, label = { Text("Text (.txt)") })
+                FilterChip(selected = excel, onClick = { excel = true }, label = { Text("Excel table (.xlsx)") })
+            }
+            if (excel) {
+                Text(
+                    "Each line becomes a row and each separate piece of text on it a column, one sheet per page. Uses the text as read (not your edits).",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
             SendButtons(
                 enabled = text.isNotBlank(),
                 onDenied = { vm.say("Storage permission is needed to save to the phone") },
-            ) { target -> vm.exportText(scan, text, target) }
+            ) { target -> if (excel) vm.exportExcel(scan, target) else vm.exportText(scan, text, target) }
         }
     }
 }

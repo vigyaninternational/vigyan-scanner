@@ -21,8 +21,22 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
     private val prefs = app.getSharedPreferences("settings", Context.MODE_PRIVATE)
     private val ctx: Application get() = getApplication()
 
+    private val _settings = MutableStateFlow(AppSettings.load(prefs))
+    val settings: StateFlow<AppSettings> = _settings
+
+    fun updateSettings(change: (AppSettings) -> AppSettings) {
+        val s = change(_settings.value)
+        s.save(prefs)
+        _settings.value = s
+    }
+
+    /** Scans, not counting the Recycle bin. */
     private val _scans = MutableStateFlow<List<Scan>>(emptyList())
     val scans: StateFlow<List<Scan>> = _scans
+
+    /** The Recycle bin (kept 30 days). */
+    private val _trash = MutableStateFlow<List<Scan>>(emptyList())
+    val trash: StateFlow<List<Scan>> = _trash
 
     private val _folders = MutableStateFlow<List<String>>(emptyList())
     val folders: StateFlow<List<String>> = _folders
@@ -50,7 +64,7 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
     private val _openScan = MutableStateFlow<String?>(null)
     val openScan: StateFlow<String?> = _openScan
 
-    enum class Target { PHONE, DRIVE, SHARE }
+    enum class Target { PHONE, DRIVE, SHARE, PRINT }
 
     class PendingSend(val target: Target, val files: List<File>)
 
@@ -92,10 +106,16 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun <T> io(block: () -> T): T = withContext(Dispatchers.IO) { block() }
 
     private suspend fun reload() {
-        val list = io { repo.list() }
+        val all = io { repo.list() }
+        val list = all.filter { it.trashed == 0L }
         _scans.value = list
+        _trash.value = all.filter { it.trashed > 0L }.sortedByDescending { it.trashed }
         _folders.value = io { repo.folders(list) }
     }
+
+    /** [name], or "name (2)"… if another scan already has it. */
+    private fun uniqueName(name: String, exceptId: String? = null) =
+        Naming.unique(name.trim(), _scans.value.filter { it.id != exceptId }.map { it.name })
 
     private fun work(label: String, block: suspend () -> Unit) {
         viewModelScope.launch {
@@ -122,17 +142,224 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
         reload() // the new scan must be in the list before its screen opens
         then(scan)
         if (sort) autoSortInBackground(scan)
+        checkQualityInBackground(scan)
+    }
+
+    private suspend fun importFiles(uris: List<Uri>): List<File> {
+        val files = io { Images.import(ctx, uris, File(ctx.cacheDir, "import").apply { deleteRecursively() }) }
+        if (files.isEmpty()) error("Nothing to import")
+        return files
     }
 
     /** Photos / PDFs picked in the app or shared from WhatsApp, Gallery, Files… */
     fun importUris(uris: List<Uri>, sort: Boolean = true, then: (Scan) -> Unit = { _openScan.value = it.id }) = work("Importing…") {
-        val files = io { Images.import(ctx, uris, File(ctx.cacheDir, "import").apply { deleteRecursively() }) }
-        if (files.isEmpty()) error("Nothing to import")
+        val files = importFiles(uris)
         val scan = io { repo.createFromFiles(files, "Imported ${stamp()}", folderForNew) }
         reload()
         then(scan)
         if (sort) autoSortInBackground(scan)
     }
+
+    // ---- Scan & merge by name ----
+
+    /**
+     * Starts a person's document set: all their pages (10th, +2, CLC, Aadhaar…) in one scan named
+     * after them, saved later as one PDF (RAHUL_KUMAR.pdf). No student record is made.
+     */
+    fun newNamedSession(uris: List<Uri>, person: String, ref: String, imported: Boolean, then: (Scan) -> Unit) =
+        work(if (imported) "Importing…" else "Saving pages…") {
+            val name = uniqueName(listOf(person.trim(), ref.trim()).filter { it.isNotEmpty() }.joinToString(" - "))
+            val files = if (imported) importFiles(uris) else null
+            val scan = io {
+                val s = if (files != null) repo.createFromFiles(files, name, folderForNew) else repo.create(uris, name, folderForNew)
+                repo.setExtra(s, "person", person.trim())
+                repo.setExtra(s, "ref", ref.trim())
+                repo.get(s.id)!!
+            }
+            reload()
+            then(scan)
+            checkQualityInBackground(scan)
+        }
+
+    /** More pages for an existing scan, from the camera ([uris]) or photos / PDFs ([imported]). */
+    fun appendPages(scan: Scan, uris: List<Uri>, imported: Boolean) = work("Adding pages…") {
+        val before = scan.pages.size
+        val updated = if (imported) {
+            val files = importFiles(uris)
+            io { repo.addFiles(scan, files) }
+        } else {
+            io { repo.addPages(scan, uris) }
+        }
+        _message.value = "Added ${updated.pages.size - before} page(s)"
+        checkQualityInBackground(updated)
+    }
+
+    // ---- Bulk scanning ----
+
+    /**
+     * Several documents scanned in one go (split with ✂ or blank separator pages): each becomes
+     * its own scan in a new folder, named from its text where it can be recognised.
+     */
+    fun saveDocuments(sets: List<List<Uri>>, then: (String) -> Unit) = work("Saving documents…") {
+        val folder = "Bulk scan ${stamp()}"
+        io { repo.addFolder(folder, _scans.value) }
+        var named = 0
+        val flagged = mutableListOf<String>()
+        sets.forEachIndexed { i, set ->
+            val prefix = "Document ${i + 1} of ${sets.size}: "
+            _busy.value = prefix + "saving…"
+            val scan = io { repo.create(set, "Document ${i + 1} ${stamp()}", folder) }
+            try {
+                val s = ocrMissing(scan, prefix = prefix)
+                val type = DocClassifier.classify(s.text.orEmpty())
+                val person = FormExtractor.extract(s.rows ?: s.text.orEmpty())["name"]
+                val name = when {
+                    type != null && !person.isNullOrBlank() -> "${type.label} - $person"
+                    type != null -> "${type.label} ${i + 1}"
+                    !person.isNullOrBlank() -> person
+                    else -> null
+                }
+                if (name != null) {
+                    io { repo.rename(repo.get(scan.id)!!, uniqueName(name)) }
+                    reload()
+                    named++
+                }
+            } catch (e: Exception) {
+                // Naming is a convenience: the document is saved either way.
+            }
+            val issues = io { pageIssues(scan.pages) }
+            if (issues != null) flagged += "document ${i + 1} ($issues)"
+        }
+        _currentFolder.value = folder
+        _message.value = "${sets.size} document(s) saved, $named named from their text." +
+            (if (flagged.isNotEmpty()) " Check " + flagged.joinToString(", ") + "." else "")
+        then(folder)
+    }
+
+    // ---- Scan quality ----
+
+    /** "page 2 blurry, page 4 too dark", or null when every page looks fine. */
+    private fun pageIssues(pages: List<File>): String? {
+        val found = pages.mapIndexedNotNull { i, p ->
+            val w = runCatching { Filters.quality(p).warnings }.getOrDefault(emptyList())
+            if (w.isEmpty()) null else "page ${i + 1} ${ScanQuality.describe(w)}"
+        }
+        return found.takeIf { it.isNotEmpty() }?.joinToString(", ")
+    }
+
+    /** Quietly checks new pages and suggests rescanning bad ones (never shows the progress dialog). */
+    private fun checkQualityInBackground(scan: Scan) {
+        if (!_settings.value.qualityWarnings) return
+        viewModelScope.launch {
+            val issues = withContext(Dispatchers.Default) { runCatching { pageIssues(scan.pages) }.getOrNull() }
+            if (issues != null) _message.value = "Check ${scan.name}: $issues. Rescan with + Add pages if it can't be read."
+        }
+    }
+
+    // ---- Page filters ----
+
+    fun applyFilter(scan: Scan, indices: List<Int>, filter: PageFilter) = work("${filter.label}…") {
+        indices.forEachIndexed { k, i ->
+            if (indices.size > 1) _busy.value = "${filter.label}: page ${k + 1} of ${indices.size}…"
+            io {
+                val src = Images.decode(scan.pages[i], 2600)
+                val out = Filters.apply(src, filter)
+                if (out !== src) src.recycle()
+                repo.replacePage(scan, i, out, reshaped = false)
+                out.recycle()
+            }
+        }
+        _message.value = if (indices.size == 1) "Done. ✏ › Restore the original page undoes it." else "Done on ${indices.size} pages"
+    }
+
+    // ---- Favourites, copies, Recycle bin ----
+
+    fun toggleFavorite(scan: Scan) = viewModelScope.launch {
+        io { repo.setExtra(scan, "favorite", !scan.favorite) }
+        reload()
+    }
+
+    fun setFavorite(ids: List<String>, on: Boolean) = work("Saving…") {
+        io { ids.mapNotNull { repo.get(it) }.forEach { repo.setExtra(it, "favorite", on) } }
+    }
+
+    fun copyScans(ids: List<String>) = work("Copying…") {
+        io { ids.mapNotNull { repo.get(it) }.forEach { repo.copy(it, uniqueName(it.name + " copy")) } }
+        _message.value = "${ids.size} copy(ies) made"
+    }
+
+    /** Renames the scans (in the order given) to "Base 1", "Base 2"… */
+    fun bulkRename(ids: List<String>, base: String) = work("Renaming…") {
+        val b = base.trim()
+        if (b.isEmpty()) error("Type a name")
+        io {
+            ids.mapNotNull { repo.get(it) }.forEachIndexed { i, s ->
+                repo.rename(s, if (ids.size == 1) b else "$b ${i + 1}")
+            }
+        }
+        _message.value = "${ids.size} scan(s) renamed"
+    }
+
+    /** Pages of a scan as a new scan ([oneEach]: one new scan per page). The original is kept. */
+    fun extractPages(scan: Scan, indices: List<Int>, oneEach: Boolean, then: (Scan?) -> Unit) = work("Splitting…") {
+        if (indices.isEmpty()) error("Pick the pages first")
+        val made = io {
+            if (oneEach) {
+                indices.map { i -> repo.extract(scan, listOf(i), uniqueName("${scan.name} - page ${i + 1}")) }
+            } else {
+                listOf(repo.extract(scan, indices, uniqueName("${scan.name} - pages ${indices.map { it + 1 }.joinToString(",")}")))
+            }
+        }
+        reload()
+        _message.value = if (made.size == 1) "New scan made: ${made[0].name}" else "${made.size} new scans made"
+        then(made.singleOrNull())
+    }
+
+    fun restoreFromTrash(ids: List<String>) = work("Restoring…") {
+        io { ids.mapNotNull { repo.get(it) }.forEach { repo.untrash(it) } }
+        _message.value = "${ids.size} scan(s) restored"
+    }
+
+    fun deleteForever(ids: List<String>) = work("Deleting…") {
+        io { ids.mapNotNull { repo.get(it) }.forEach { repo.delete(it) } }
+    }
+
+    fun emptyTrash() = work("Emptying the Recycle bin…") {
+        io { _trash.value.forEach { repo.delete(it) } }
+        _message.value = "Recycle bin emptied"
+    }
+
+    /** How much space the app uses, for the Storage screen. */
+    fun storageReport(then: (String) -> Unit) = work("Measuring…") {
+        fun size(f: File) = f.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+        val text = io {
+            val scans = _scans.value
+            val trash = _trash.value
+            val scanBytes = scans.sumOf { size(it.dir) }
+            val trashBytes = trash.sumOf { size(it.dir) }
+            val cacheBytes = size(ctx.cacheDir)
+            val odia = File(ctx.filesDir, "tesseract").let { if (it.exists()) size(it) else 0L }
+            fun mb(b: Long) = String.format(Locale.US, "%.1f MB", b / 1_048_576.0)
+            buildString {
+                append("Scans: ${scans.size} (${scans.sumOf { it.pages.size }} pages), ${mb(scanBytes)}\n")
+                append("Recycle bin: ${trash.size} scan(s), ${mb(trashBytes)}\n")
+                if (odia > 0) append("Odia reading data: ${mb(odia)}\n")
+                append("Temporary files: ${mb(cacheBytes)}\n")
+                append("\nTotal: ${mb(scanBytes + trashBytes + cacheBytes + odia)}")
+            }
+        }
+        then(text)
+    }
+
+    fun clearTemporaryFiles() = work("Clearing…") {
+        io { ctx.cacheDir.listFiles().orEmpty().forEach { it.deleteRecursively() } }
+        _message.value = "Temporary files cleared"
+    }
+
+    /** Suggested file name for saving [scan]: RAHUL_KUMAR for a person's set, else the Settings template. */
+    fun suggestFileName(scan: Scan): String =
+        if (scan.person.isNotBlank()) Naming.personFile(scan.person, scan.ref)
+        else Naming.apply(_settings.value.nameTemplate, scan.name, scan.ref, scan.folder, scan.created)
 
     // ---- In-app update ----
 
@@ -163,7 +390,7 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
     /** Quietly at start-up (at most every 6 hours), or with a message when [manual]. */
     fun checkForUpdate(manual: Boolean) {
         val now = System.currentTimeMillis()
-        if (!manual && now - prefs.getLong(KEY_LAST_CHECK, 0) < 6 * 3600_000L) return
+        if (!manual && (!_settings.value.autoUpdate || now - prefs.getLong(KEY_LAST_CHECK, 0) < 6 * 3600_000L)) return
         val go: suspend () -> Unit = {
             val latest = io { Updater.latest() }
             prefs.edit().putLong(KEY_LAST_CHECK, now).apply()
@@ -588,7 +815,7 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
         return if (qr != null) (fromText + qr) to true else fromText to false
     }
 
-    private val defaultName = Regex("""^(Scan|Imported|Merged|Form \d+)\b.*""")
+    private val defaultName = Regex("""^(Scan|Imported|Merged|Document \d+|Form \d+)\b.*""")
 
     /** Names a scan after the person once Smart Fill finds a name (only if it still has a default name). */
     private fun autoName(scan: Scan, fields: Map<String, String>) {
@@ -624,19 +851,35 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- Organising ----
 
-    fun rename(scan: Scan, name: String) = work("Saving…") { io { repo.rename(scan, name) } }
+    fun rename(scan: Scan, name: String) = work("Saving…") {
+        if (name.isBlank()) error("Type a name")
+        io { repo.rename(scan, uniqueName(name, exceptId = scan.id)) }
+    }
 
-    fun delete(scan: Scan) = work("Deleting…") { io { repo.delete(scan) } }
+    /** Scan & merge by name: change the person's name / reference number. */
+    fun setPerson(scan: Scan, person: String, ref: String) = work("Saving…") {
+        io {
+            repo.setExtra(scan, "person", person.trim())
+            repo.setExtra(scan, "ref", ref.trim())
+        }
+    }
+
+    /** Deleting moves scans to the Recycle bin (kept 30 days). */
+    fun delete(scan: Scan) = work("Deleting…") {
+        io { repo.trash(scan) }
+        _message.value = "Moved to the Recycle bin (kept ${ScanRepository.TRASH_DAYS} days)"
+    }
 
     fun deleteMany(ids: List<String>) = work("Deleting…") {
-        io { ids.mapNotNull { repo.get(it) }.forEach { repo.delete(it) } }
+        io { ids.mapNotNull { repo.get(it) }.forEach { repo.trash(it) } }
+        _message.value = "${ids.size} scan(s) moved to the Recycle bin (kept ${ScanRepository.TRASH_DAYS} days)"
     }
 
     /** Joins the scans, in the order given, into one new scan. */
     fun merge(ids: List<String>, then: (Scan) -> Unit) = work("Merging…") {
         val list = io { ids.mapNotNull { repo.get(it) } }
         if (list.size < 2) error("Pick at least two scans")
-        val merged = io { repo.merge(list, "Merged ${stamp()}") }
+        val merged = io { repo.merge(list, uniqueName("Merged ${stamp()}")) }
         reload()
         _message.value = "Merged ${list.size} scans (${merged.pages.size} pages). The originals are kept."
         then(merged)
@@ -675,10 +918,27 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
 
     fun export(scan: Scan, options: ExportOptions, target: Target) = send(target, "Making files…") {
         val needText = (Format.PDF in options.formats && options.searchable) || (Format.TXT in options.formats && scan.text == null)
-        val s = if (needText) ocrMissing(scan) else scan
+        val full = if (needText) ocrMissing(scan) else scan
         _busy.value = "Making files…"
+        // Only some pages: a copy of the scan with just those (and just their text).
+        val chosen = options.pages?.filter { it in full.pages.indices }?.takeIf { it.isNotEmpty() && it.size < full.pages.size }
+        val s = if (chosen == null) full else io {
+            val pages = chosen.map { full.pages[it] }
+            val texts = pages.map { repo.pageOcr(it)?.text }
+            full.copy(pages = pages, text = if (texts.all { it != null }) texts.joinToString("\n\n") { it!!.trim() } else full.text)
+        }
         val ocr = io { s.pages.map { repo.pageOcr(it) } }
         io { Exporter.files(ctx, s, options, ocr) }
+    }
+
+    /** The scan's text as an Excel table (Scan to Excel). */
+    fun exportExcel(scan: Scan, target: Target) = send(target, "Making the Excel file…") {
+        val s = ocrMissing(scan)
+        _busy.value = "Making the Excel file…"
+        val pages = io {
+            s.pages.map { p -> repo.pageOcr(p)?.let { if (it.lines.isEmpty()) it.text else OcrLayout.rows(it.lines) }.orEmpty() }
+        }
+        listOf(io { Exporter.tableXlsx(ctx, pages, suggestFileName(s)) })
     }
 
     /** Saves the (edited) text, then sends it as a .txt file. */
@@ -690,11 +950,11 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** One CSV row per scan that has a filled form ([override] = unsaved edits for a single scan). */
-    fun exportForms(scans: List<Scan>, name: String, target: Target, override: Map<String, String>? = null) =
-        send(target, "Making CSV…") {
+    fun exportForms(scans: List<Scan>, name: String, target: Target, override: Map<String, String>? = null, excel: Boolean = false) =
+        send(target, if (excel) "Making the Excel file…" else "Making CSV…") {
             val forms = if (override != null) listOf(override) else scans.map { it.fields }.filter { it.isNotEmpty() }
             if (forms.isEmpty()) error("No filled forms here yet. Open a scan and use Smart Fill first.")
-            listOf(io { Exporter.formsCsv(ctx, forms, name) })
+            listOf(io { if (excel) Exporter.formsXlsx(ctx, forms, name) else Exporter.formsCsv(ctx, forms, name) })
         }
 
     private fun send(target: Target, label: String, makeFiles: suspend () -> List<File>) = work(label) {
@@ -702,11 +962,11 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
         if (files.isEmpty()) error("Nothing to export")
         when (target) {
             Target.PHONE -> {
-                io { Exporter.saveToPhone(ctx, files) }
-                _message.value = "Saved ${files.size} file(s) to Download/${Exporter.FOLDER}"
+                val where = io { Exporter.saveToPhone(ctx, files, _settings.value.saveTree?.let(Uri::parse)) }
+                _message.value = "Saved ${files.size} file(s) to $where"
             }
             // These open another app, which needs an Activity: the screen does it.
-            Target.DRIVE, Target.SHARE -> _pendingSend.value = PendingSend(target, files)
+            Target.DRIVE, Target.SHARE, Target.PRINT -> _pendingSend.value = PendingSend(target, files)
         }
     }
 

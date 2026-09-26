@@ -56,6 +56,7 @@ import com.vigyan.scanner.ui.FillScreen
 import com.vigyan.scanner.ui.HomeScreen
 import com.vigyan.scanner.ui.ScanMode
 import com.vigyan.scanner.ui.ScannerTheme
+import com.vigyan.scanner.ui.SettingsScreen
 import com.vigyan.scanner.ui.TextScreen
 
 // A FragmentActivity (still a ComponentActivity) because the fingerprint prompt needs one.
@@ -74,7 +75,8 @@ class MainActivity : FragmentActivity() {
         locked = appLock.enabled && (savedInstanceState?.getBoolean(KEY_LOCKED, true) ?: true)
         if (savedInstanceState == null) handleShared(intent)
         setContent {
-            ScannerTheme {
+            val settings by vm.settings.collectAsStateWithLifecycle()
+            ScannerTheme(theme = settings.theme) {
                 Surface(Modifier.fillMaxSize()) {
                     Box(Modifier.fillMaxSize()) {
                         App(vm)
@@ -212,6 +214,10 @@ class MainActivity : FragmentActivity() {
                         }
                         Exporter.uploadToDrive(this@MainActivity, send.files)
                     }
+                    ScanViewModel.Target.PRINT -> {
+                        val pdf = send.files.firstOrNull { it.extension.equals("pdf", ignoreCase = true) } ?: error("No PDF to print")
+                        Printer.print(this@MainActivity, pdf)
+                    }
                     else -> Exporter.share(this@MainActivity, send.files)
                 }
             } catch (e: Exception) {
@@ -239,7 +245,7 @@ class MainActivity : FragmentActivity() {
                         when (mode) {
                             ScanMode.TEXT -> nav.navigate("text/${scan.id}")
                             ScanMode.FILL -> nav.navigate("fill/${scan.id}")
-                            ScanMode.DOCUMENT -> Unit
+                            ScanMode.DOCUMENT, ScanMode.PERSON -> Unit
                         }
                     },
                     onNavigate = { nav.navigate(it) },
@@ -266,19 +272,54 @@ class MainActivity : FragmentActivity() {
                 }
             }
             composable(
-                "quickscan?batch={batch}",
-                arguments = listOf(navArgument("batch") { type = NavType.StringType; defaultValue = "0" }),
+                // batch: pages per form (Batch fill); append: add to this scan; name/ref: Scan & merge by name.
+                "quickscan?batch={batch}&append={append}&name={name}&ref={ref}",
+                arguments = listOf(
+                    navArgument("batch") { type = NavType.StringType; defaultValue = "0" },
+                    navArgument("append") { type = NavType.StringType; defaultValue = "" },
+                    navArgument("name") { type = NavType.StringType; defaultValue = "" },
+                    navArgument("ref") { type = NavType.StringType; defaultValue = "" },
+                ),
             ) { entry ->
                 val batch = entry.arguments?.getString("batch")?.toIntOrNull() ?: 0
+                val append = entry.arguments?.getString("append").orEmpty()
+                val person = entry.arguments?.getString("name").orEmpty()
+                val ref = entry.arguments?.getString("ref").orEmpty()
+                val settings by vm.settings.collectAsStateWithLifecycle()
                 QuickScanScreen(
+                    title = when {
+                        person.isNotEmpty() -> person
+                        append.isNotEmpty() -> "Add pages"
+                        batch > 0 -> "Batch fill forms"
+                        else -> "Quick scan"
+                    },
+                    // Splitting into several documents only makes sense for a plain Quick scan.
+                    bulk = batch == 0 && append.isEmpty() && person.isEmpty(),
+                    guide = if (person.isNotEmpty()) settings.docOrderList else emptyList(),
+                    startAuto = settings.quickAuto,
+                    startEnhance = settings.quickEnhance,
+                    warnings = settings.qualityWarnings,
                     onCancel = { nav.popBackStack() },
-                    onDone = { files ->
-                        val uris = files.map { Uri.fromFile(it) }
-                        if (batch > 0) {
-                            nav.popBackStack()
-                            vm.batchFill(uris, batch) {}
-                        } else {
-                            vm.saveNewScan(uris, sort = true) { scan ->
+                    onDone = { sets ->
+                        val uris = sets.flatten().map { Uri.fromFile(it) }
+                        when {
+                            batch > 0 -> {
+                                nav.popBackStack()
+                                vm.batchFill(uris, batch) {}
+                            }
+                            append.isNotEmpty() -> {
+                                nav.popBackStack()
+                                vm.scan(append)?.let { vm.appendPages(it, uris, imported = false) }
+                            }
+                            person.isNotEmpty() -> vm.newNamedSession(uris, person, ref, imported = false) { scan ->
+                                nav.popBackStack()
+                                nav.navigate("scan/${scan.id}")
+                            }
+                            sets.size > 1 -> {
+                                nav.popBackStack()
+                                vm.saveDocuments(sets.map { set -> set.map { Uri.fromFile(it) } }) {}
+                            }
+                            else -> vm.saveNewScan(uris, sort = true) { scan ->
                                 nav.popBackStack()
                                 nav.navigate("scan/${scan.id}")
                             }
@@ -286,6 +327,7 @@ class MainActivity : FragmentActivity() {
                     },
                 )
             }
+            composable("settings") { SettingsScreen(vm, onBack = { nav.popBackStack() }, onNavigate = { nav.navigate(it) }) }
             composable("crop/{id}/{page}") { entry ->
                 scans.firstOrNull { it.id == entry.arguments?.getString("id") }?.let { scan ->
                     CropScreen(vm, scan, entry.arguments?.getString("page")?.toIntOrNull() ?: 0, onBack = { nav.popBackStack() })

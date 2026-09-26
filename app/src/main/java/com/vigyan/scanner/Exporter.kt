@@ -12,6 +12,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.ContactsContract
+import android.provider.DocumentsContract
 import android.provider.MediaStore
 import androidx.core.content.FileProvider
 import java.io.File
@@ -43,8 +44,24 @@ data class ExportOptions(
     val signature: Boolean = false,
     /** Blank space at the top and bottom of an A4 page, to print on the college letter pad. */
     val letterPad: Boolean = false,
+    /** "Page 1 of 5" at the bottom of each PDF page. */
+    val pageNumbers: Boolean = false,
+    /** PDF paper size (the scan is fitted onto it). */
+    val pageSize: PageSize = PageSize.FIT,
+    /** File name without extension; null = the scan's name. */
+    val fileName: String? = null,
+    /** Only these pages (indices, in this order); null = all. */
+    val pages: List<Int>? = null,
 ) {
     val decorated get() = !idCard && (attested || seal || signature || letterPad)
+}
+
+/** PDF paper sizes in points (1/72 inch). FIT = one page per scan, A4 wide, in the scan's own shape. */
+enum class PageSize(val label: String, val width: Float, val height: Float) {
+    FIT("Same as scan", 0f, 0f),
+    A4("A4", 595f, 842f),
+    A5("A5", 420f, 595f),
+    LETTER("Letter", 612f, 792f),
 }
 
 /** Turns a scan into files and sends them to phone storage, Google Drive, or any app. */
@@ -58,7 +75,7 @@ object Exporter {
         mkdirs()
     }
 
-    private fun safeName(name: String) = name.replace(Regex("""[\\/:*?"<>|]"""), "_").trim().ifBlank { "scan" }
+    fun safeName(name: String) = name.replace(Regex("""[\\/:*?"<>|]"""), "_").trim().ifBlank { "scan" }
 
     /**
      * Writes the chosen formats of [scan] into the cache export folder. [ocr] is the text of each
@@ -66,7 +83,8 @@ object Exporter {
      */
     fun files(context: Context, scan: Scan, options: ExportOptions, ocr: List<PageOcr?>): List<File> {
         val dir = exportDir(context)
-        val base = safeName(scan.name)
+        val base = options.fileName?.trim()?.removeSuffix(".pdf")?.removeSuffix(".PDF")?.takeIf { it.isNotBlank() }
+            ?.let(::safeName) ?: safeName(scan.name)
         val out = mutableListOf<File>()
         val branding = Branding(context)
         if (Format.PDF in options.formats) {
@@ -139,6 +157,12 @@ object Exporter {
     }
 
     private fun pdfPages(pages: List<File>, ocr: List<PageOcr?>, options: ExportOptions, branding: Branding): List<PdfWriter.Page> {
+        val made = layoutPages(pages, ocr, options, branding)
+        if (!options.pageNumbers) return made
+        return made.mapIndexed { i, p -> PdfWriter.Page(p.width, p.height, p.placements, "Page ${i + 1} of ${made.size}") }
+    }
+
+    private fun layoutPages(pages: List<File>, ocr: List<PageOcr?>, options: ExportOptions, branding: Branding): List<PdfWriter.Page> {
         fun placement(i: Int, x: Float, y: Float, w: Float, h: Float, image: PdfWriter.Image): PdfWriter.Placement {
             val o = ocr.getOrNull(i)
             return if (o != null) PdfWriter.Placement(image, x, y, w, h, o.lines, o.width, o.height)
@@ -151,6 +175,16 @@ object Exporter {
                     // A4 with blank space at the top and bottom, to print on the college letter pad.
                     val b = padBox(image.pixelWidth, image.pixelHeight)
                     PdfWriter.Page(A4_W, A4_H, listOf(placement(i, b[0], b[1], b[2], b[3], image)))
+                } else if (options.pageSize != PageSize.FIT) {
+                    // Fitted onto the chosen paper, turned sideways for a landscape scan.
+                    val landscape = image.pixelWidth > image.pixelHeight
+                    val pw = if (landscape) options.pageSize.height else options.pageSize.width
+                    val ph = if (landscape) options.pageSize.width else options.pageSize.height
+                    val margin = 14f
+                    val s = minOf((pw - 2 * margin) / image.pixelWidth, (ph - 2 * margin) / image.pixelHeight)
+                    val w = image.pixelWidth * s
+                    val h = image.pixelHeight * s
+                    PdfWriter.Page(pw, ph, listOf(placement(i, (pw - w) / 2, (ph - h) / 2, w, h, image)))
                 } else {
                     // One PDF page per scanned page, A4 width, same shape as the scan.
                     val h = A4_W * image.pixelHeight / image.pixelWidth
@@ -274,6 +308,30 @@ object Exporter {
         return File(exportDir(context), "${safeName(name)}.csv").apply { writeText(sb.toString()) }
     }
 
+    /** Filled forms as an Excel file: one row per form. */
+    fun formsXlsx(context: Context, forms: List<Map<String, String>>, name: String): File {
+        val fields = FormExtractor.FIELDS
+        val rows = listOf(fields.map { it.csvHeader }) + forms.map { form ->
+            fields.map { f ->
+                val v = form[f.key].orEmpty()
+                if (f.key == "dob") FormExtractor.toIsoDate(v).ifBlank { v } else v
+            }
+        }
+        return File(exportDir(context), "${safeName(name)}.xlsx").apply {
+            outputStream().use { Xlsx.write(listOf(Xlsx.Sheet("Forms", rows)), it) }
+        }
+    }
+
+    /** A scan's text laid out as a table (one row per line, a cell per separate piece of text). */
+    fun tableXlsx(context: Context, pages: List<String>, name: String): File {
+        val sheets = pages.mapIndexedNotNull { i, rows ->
+            Xlsx.cells(rows).takeIf { it.isNotEmpty() }?.let { Xlsx.Sheet(if (pages.size > 1) "Page ${i + 1}" else "Scan", it, boldHeader = false) }
+        }.ifEmpty { error("No text found to put in Excel") }
+        return File(exportDir(context), "${safeName(name)}.xlsx").apply {
+            outputStream().use { Xlsx.write(sheets, it) }
+        }
+    }
+
     fun csvName(prefix: String) = prefix + " " + SimpleDateFormat("dd-MM-yyyy", Locale.US).format(Date())
 
     private fun csv(v: String) = if (v.any { it == ',' || it == '"' || it == '\n' }) "\"" + v.replace("\"", "\"\"") + "\"" else v
@@ -285,14 +343,35 @@ object Exporter {
         "csv" -> "text/csv"
         "png" -> "image/png"
         "zip" -> "application/zip"
+        "xlsx" -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         else -> "application/octet-stream"
     }
 
+    /** A folder the user picked (Settings › Save to phone), shown as its last part: "Documents/Scans". */
+    fun treeLabel(tree: Uri): String =
+        runCatching { DocumentsContract.getTreeDocumentId(tree).substringAfter(':').ifBlank { "chosen folder" } }.getOrDefault("chosen folder")
+
     /**
-     * Saves into Download/Vigyan Scanner on the phone. On Android 9 and older this needs the
-     * storage permission, which the screen asks for first.
+     * Saves into Download/Vigyan Scanner on the phone, or into the folder picked in Settings
+     * ([tree]). On Android 9 and older Download needs the storage permission, which the screen
+     * asks for first. Returns where the files went.
      */
-    fun saveToPhone(context: Context, files: List<File>) {
+    fun saveToPhone(context: Context, files: List<File>, tree: Uri? = null): String {
+        if (tree != null) {
+            try {
+                val parent = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
+                for (file in files) {
+                    // Android adds " (1)" itself when the name is taken.
+                    val doc = DocumentsContract.createDocument(context.contentResolver, parent, mimeOf(file), file.name)
+                        ?: error("Could not create ${file.name}")
+                    context.contentResolver.openOutputStream(doc)?.use { out -> file.inputStream().use { it.copyTo(out) } }
+                        ?: error("Could not write ${file.name}")
+                }
+                return treeLabel(tree)
+            } catch (e: SecurityException) {
+                error("The chosen folder can't be used any more. Pick it again in Settings.")
+            }
+        }
         for (file in files) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 val values = ContentValues().apply {
@@ -315,6 +394,7 @@ object Exporter {
                 MediaScannerConnection.scanFile(context, arrayOf(dest.absolutePath), arrayOf(mimeOf(file)), null)
             }
         }
+        return "Download/$FOLDER"
     }
 
     fun isDriveInstalled(context: Context): Boolean =

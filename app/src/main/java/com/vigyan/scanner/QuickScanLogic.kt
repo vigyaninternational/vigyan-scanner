@@ -101,6 +101,15 @@ object QuickScanLogic {
         return threshold
     }
 
+    /**
+     * Bulk scanning: [count] pages split into documents where each index in [breaks] starts a new
+     * one. Returns the page ranges, leaving out empty ones.
+     */
+    fun groups(count: Int, breaks: Collection<Int>): List<IntRange> {
+        val cuts = listOf(0) + breaks.filter { it in 1 until count }.distinct().sorted() + count
+        return cuts.zipWithNext().map { (a, b) -> a until b }.filter { !it.isEmpty() }
+    }
+
     /** Levels for "document look": the 3rd and 97th brightness percentiles become black and white. */
     fun levels(lum: IntArray): Pair<Int, Int> {
         val hist = IntArray(256)

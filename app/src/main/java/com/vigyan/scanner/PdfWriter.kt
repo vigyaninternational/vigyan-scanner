@@ -35,7 +35,8 @@ class PdfWriter {
         val srcHeight: Int = image.pixelHeight,
     )
 
-    class Page(val width: Float, val height: Float, val placements: List<Placement>)
+    /** [footer]: visible text centred at the bottom (e.g. "Page 2 of 5"), on a small white box. */
+    class Page(val width: Float, val height: Float, val placements: List<Placement>, val footer: String? = null)
 
     fun write(pages: List<Page>, out: OutputStream, password: String? = null) {
         require(pages.isNotEmpty()) { "No pages" }
@@ -121,6 +122,15 @@ class PdfWriter {
                 sb.append("/F1 ${num(size)} Tf ${num(scale)} Tz 1 0 0 1 ${num(x)} ${num(baseline)} Tm (${escape(text)}) Tj\n")
             }
             sb.append("ET\n")
+        }
+        page.footer?.let { f ->
+            val text = winAnsi(f)
+            val size = 9f
+            val w = textWidth(text) * size / 1000f
+            val x = (page.width - w) / 2
+            sb.append("q 1 1 1 rg ${num(x - 5)} 9 ${num(w + 10)} ${num(size + 6)} re f Q\n")
+            // Text state (render mode, scaling) carries over from the invisible layer: reset it.
+            sb.append("q BT 0 Tr 100 Tz 0 0 0 rg /F1 ${num(size)} Tf 1 0 0 1 ${num(x)} 13 Tm (${escape(text)}) Tj ET Q\n")
         }
         return latin1(sb.toString())
     }

@@ -24,6 +24,13 @@ data class Scan(
     val fields: Map<String, String>,
     /** A marksheet has been read and saved for this scan (see MarksRecord). */
     val hasMarks: Boolean = false,
+    /** Scan & merge by name: whose documents these are ("" for an ordinary scan). */
+    val person: String = "",
+    /** Optional reference number entered with the name. */
+    val ref: String = "",
+    val favorite: Boolean = false,
+    /** When it was put in the Recycle bin (0 = not deleted). */
+    val trashed: Long = 0L,
 )
 
 /**
@@ -37,10 +44,18 @@ class ScanRepository(private val context: Context) {
     private val root = File(context.filesDir, "scans").apply { mkdirs() }
     private val foldersFile = File(root, "folders.json")
 
-    fun list(): List<Scan> =
-        root.listFiles { f -> f.isDirectory }.orEmpty()
+    /** Every scan, the Recycle bin's too. Scans that have been in the bin over 30 days are removed for good. */
+    fun list(): List<Scan> {
+        val now = System.currentTimeMillis()
+        return root.listFiles { f -> f.isDirectory }.orEmpty()
             .mapNotNull { load(it) }
+            .filter { s ->
+                val expired = s.trashed > 0 && now - s.trashed > TRASH_DAYS * 86_400_000L
+                if (expired) s.dir.deleteRecursively()
+                !expired
+            }
             .sortedByDescending { it.created }
+    }
 
     fun get(id: String): Scan? = load(File(root, id))
 
@@ -77,6 +92,36 @@ class ScanRepository(private val context: Context) {
         val added = uris.map { uri -> File(scan.dir, newPageName()).also { copy(uri, it) } }
         return setPages(scan, scan.pages + added)
     }
+
+    fun addFiles(scan: Scan, files: List<File>): Scan {
+        val added = files.map { src -> File(scan.dir, newPageName()).also { src.copyTo(it) } }
+        return setPages(scan, scan.pages + added)
+    }
+
+    /** A copy of the scan (pages, text, form and name details). */
+    fun copy(scan: Scan, name: String): Scan {
+        val c = createFromFiles(scan.pages, name, scan.folder, ocrToo = true)
+        saveFields(c, scan.fields)
+        setExtra(c, "person", scan.person)
+        setExtra(c, "ref", scan.ref)
+        return get(c.id)!!
+    }
+
+    /** Some pages of a scan (in the order given) as a new scan; the original is kept. */
+    fun extract(scan: Scan, indices: List<Int>, name: String): Scan =
+        createFromFiles(indices.map { scan.pages[it] }, name, scan.folder, ocrToo = true)
+
+    /** Sets (or, for null / "" / false / 0, removes) one detail in meta.json. */
+    fun setExtra(scan: Scan, key: String, value: Any?) {
+        val f = File(scan.dir, META)
+        val json = runCatching { JSONObject(f.readText()) }.getOrNull() ?: return
+        if (value == null || value == "" || value == false || value == 0L) json.remove(key) else json.put(key, value)
+        f.writeText(json.toString())
+    }
+
+    fun trash(scan: Scan) = setExtra(scan, "trashed", System.currentTimeMillis())
+
+    fun untrash(scan: Scan) = setExtra(scan, "trashed", null)
 
     fun deletePage(scan: Scan, index: Int): Scan {
         val page = scan.pages[index]
@@ -277,7 +322,9 @@ class ScanRepository(private val context: Context) {
     }
 
     private fun writeMeta(dir: File, name: String, created: Long, folder: String, pages: List<String>, fields: Map<String, String>) {
-        val json = JSONObject()
+        // Other details (person, favourite, Recycle bin…) are kept as they are.
+        val old = File(dir, META).takeIf { it.exists() }?.let { runCatching { JSONObject(it.readText()) }.getOrNull() }
+        val json = (old ?: JSONObject())
             .put("name", name)
             .put("created", created)
             .put("folder", folder)
@@ -311,14 +358,19 @@ class ScanRepository(private val context: Context) {
                 rows = File(dir, ROWS).takeIf { it.exists() }?.readText(),
                 fields = fields,
                 hasMarks = File(dir, "marks.json").exists(),
+                person = json.optString("person", ""),
+                ref = json.optString("ref", ""),
+                favorite = json.optBoolean("favorite", false),
+                trashed = json.optLong("trashed", 0L),
             )
         } catch (e: Exception) {
             null
         }
     }
 
-    private companion object {
-        const val META = "meta.json"
+    companion object {
+        const val TRASH_DAYS = 30
+        private const val META = "meta.json"
         const val TEXT = "text.txt"
         const val ROWS = "rows.txt"
     }
