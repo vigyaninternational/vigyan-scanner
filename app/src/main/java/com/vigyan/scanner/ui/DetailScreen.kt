@@ -152,6 +152,7 @@ fun DetailScreen(
                 title = { Text(scan.name, maxLines = 1) },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
                 actions = {
+                    HelpHomeActions("pages")
                     IconButton(onClick = { vm.toggleFavorite(scan) }) {
                         Text(if (scan.favorite) "★" else "☆", fontSize = 22.sp, color = if (scan.favorite) Color(0xFFFFB300) else LocalContentColor.current)
                     }

@@ -66,6 +66,7 @@ fun FillScreen(vm: ScanViewModel, scan: Scan, onBack: () -> Unit) {
                 title = { Text("Smart Fill") },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
                 actions = {
+                    HelpHomeActions("fill")
                     IconButton(onClick = { vm.refill(scan) { found, qr -> fields = HashMap(found); fromQr = qr } }) { Icon(Icons.Default.Refresh, "Fill again from scan") }
                 },
             )

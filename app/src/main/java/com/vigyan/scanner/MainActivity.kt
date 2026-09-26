@@ -223,7 +223,13 @@ class MainActivity : FragmentActivity() {
         }
 
         Box(Modifier.fillMaxSize()) {
-            Routes(nav, vm)
+            val appNav = remember(nav) {
+                com.vigyan.scanner.ui.AppNav(
+                    home = { nav.popBackStack("home", false) },
+                    help = { topic -> nav.navigate("help?topic=$topic") { launchSingleTop = true } },
+                )
+            }
+            androidx.compose.runtime.CompositionLocalProvider(com.vigyan.scanner.ui.LocalAppNav provides appNav) { Routes(nav, vm) }
             SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(8.dp))
         }
         busy?.let { BusyDialog(it) }
@@ -325,6 +331,10 @@ class MainActivity : FragmentActivity() {
                 )
             }
             composable("settings") { SettingsScreen(vm, onBack = { nav.popBackStack() }, onNavigate = { nav.navigate(it) }) }
+            composable(
+                "help?topic={topic}",
+                arguments = listOf(navArgument("topic") { type = NavType.StringType; defaultValue = "start" }),
+            ) { entry -> com.vigyan.scanner.ui.HelpScreen(entry.arguments?.getString("topic").orEmpty(), onBack = { nav.popBackStack() }) }
             composable("crop/{id}/{page}") { entry ->
                 scans.firstOrNull { it.id == entry.arguments?.getString("id") }?.let { scan ->
                     CropScreen(vm, scan, entry.arguments?.getString("page")?.toIntOrNull() ?: 0, onBack = { nav.popBackStack() })

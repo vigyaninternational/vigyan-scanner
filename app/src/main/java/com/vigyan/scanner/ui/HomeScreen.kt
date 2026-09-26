@@ -32,6 +32,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -100,6 +101,7 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit, onNavigate: 
     val update by vm.update.collectAsStateWithLifecycle()
     val settings by vm.settings.collectAsStateWithLifecycle()
     val trash by vm.trash.collectAsStateWithLifecycle()
+    val guideSeen by vm.guideSeen.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     var mode by rememberSaveable { mutableStateOf(ScanMode.DOCUMENT) }
@@ -224,8 +226,13 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit, onNavigate: 
                         actionIconContentColor = MaterialTheme.colorScheme.onPrimary,
                     ),
                     actions = {
+                        IconButton(onClick = { onNavigate("help?topic=start") }) { Icon(Icons.Default.Info, "Help & guide") }
                         IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, "More") }
                         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                            DropdownMenuItem(
+                                text = { Text("❓ Help & guide") },
+                                onClick = { menu = false; onNavigate("help?topic=start") },
+                            )
                             DropdownMenuItem(
                                 text = { Text("⚙ Settings") },
                                 onClick = { menu = false; onNavigate("settings") },
@@ -302,6 +309,24 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit, onNavigate: 
                                 )
                             }
                             Button(onClick = { vm.downloadUpdate() }) { Text("Update") }
+                        }
+                    }
+                }
+            }
+            if (!guideSeen && !showTrash && !selecting) {
+                item {
+                    Card(
+                        Modifier.fillMaxWidth().clickable { onNavigate("help?topic=start") },
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                    ) {
+                        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text("👋", fontSize = 22.sp)
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text("New here? Read the Help & guide", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                                Text("Short steps for every feature. Tap ⓘ at the top of any screen for help with it, and 🏠 to come home.", style = MaterialTheme.typography.bodySmall)
+                            }
+                            TextButton(onClick = { vm.markGuideSeen() }) { Text("Hide") }
                         }
                     }
                 }

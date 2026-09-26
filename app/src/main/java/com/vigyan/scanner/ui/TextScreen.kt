@@ -56,6 +56,7 @@ fun TextScreen(vm: ScanViewModel, scan: Scan, onBack: () -> Unit) {
                 title = { Text("Text (OCR)") },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
                 actions = {
+                    HelpHomeActions("text")
                     IconButton(onClick = { vm.readText(scan, force = true) { text = it.text.orEmpty() } }) {
                         Icon(Icons.Default.Refresh, "Read again")
                     }

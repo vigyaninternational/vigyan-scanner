@@ -81,6 +81,7 @@ fun CropScreen(vm: ScanViewModel, scan: Scan, index: Int, onBack: () -> Unit) {
                 title = { Text("Adjust corners · page ${index + 1}") },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
                 actions = {
+                    HelpHomeActions("pages", showHome = false)
                     Button(
                         onClick = {
                             val b = bitmap ?: return@Button

@@ -269,6 +269,7 @@ private fun marksFromJson(
 fun AnnotateScreen(vm: ScanViewModel, scan: Scan, index: Int, onBack: () -> Unit) {
     val page = scan.pages.getOrNull(index) ?: return
     val context = LocalContext.current
+    val nav = LocalAppNav.current
     val bitmap by produceState<android.graphics.Bitmap?>(null, page.path, page.lastModified()) {
         value = withContext(Dispatchers.IO) { Images.decode(page, 2500) }
     }
@@ -342,6 +343,7 @@ fun AnnotateScreen(vm: ScanViewModel, scan: Scan, index: Int, onBack: () -> Unit
                     TextButton(onClick = { if (marks.isNotEmpty()) { marks.removeAt(marks.lastIndex); selected = null } }, enabled = marks.isNotEmpty()) { Text("Undo") }
                     IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, "More") }
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        DropdownMenuItem(text = { Text("❓ Help: filling in a form") }, onClick = { menu = false; nav.help("formfill") })
                         DropdownMenuItem(text = { Text("🪄 Auto-fill blank fields") }, onClick = {
                             menu = false
                             val bmp = bitmap ?: return@DropdownMenuItem

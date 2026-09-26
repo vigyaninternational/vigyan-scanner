@@ -540,6 +540,15 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
     private val _autoSort = MutableStateFlow(prefs.getBoolean(KEY_AUTO_SORT, true))
     val autoSort: StateFlow<Boolean> = _autoSort
 
+    /** The home screen's "new here? read the guide" card has been closed. */
+    private val _guideSeen = MutableStateFlow(prefs.getBoolean("guide_seen", false))
+    val guideSeen: StateFlow<Boolean> = _guideSeen
+
+    fun markGuideSeen() {
+        _guideSeen.value = true
+        prefs.edit().putBoolean("guide_seen", true).apply()
+    }
+
     fun setAutoSort(on: Boolean) {
         _autoSort.value = on
         prefs.edit().putBoolean(KEY_AUTO_SORT, on).apply()

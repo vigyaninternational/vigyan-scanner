@@ -71,6 +71,7 @@ fun SettingsScreen(vm: ScanViewModel, onBack: () -> Unit, onNavigate: (String) -
             TopAppBar(
                 title = { Text("Settings") },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
+                actions = { HelpHomeActions("settings") },
             )
         },
     ) { padding ->

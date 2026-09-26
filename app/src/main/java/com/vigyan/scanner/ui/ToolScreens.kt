@@ -67,12 +67,13 @@ import com.vigyan.scanner.ScanViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ToolScaffold(title: String, onBack: () -> Unit, content: @Composable () -> Unit) {
+fun ToolScaffold(title: String, onBack: () -> Unit, helpTopic: String = "start", content: @Composable () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text(title) },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
+                actions = { HelpHomeActions(helpTopic) },
             )
         },
     ) { padding ->
@@ -121,7 +122,7 @@ fun PassportScreen(vm: ScanViewModel, onBack: () -> Unit) {
         rows = rows.toIntOrNull() ?: 0,
     )
 
-    ToolScaffold("Passport photo studio", onBack) {
+    ToolScaffold("Passport photo studio", onBack, "passport") {
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
             result?.photo?.let { photo ->
                 Image(
@@ -380,7 +381,7 @@ fun CutoutScreen(vm: ScanViewModel, onBack: () -> Unit, onBranding: () -> Unit) 
 
     LaunchedEffect(Unit) { if (vm.cutout.value == null) vm.makeCutout() }
 
-    ToolScaffold("Signature studio", onBack) {
+    ToolScaffold("Signature studio", onBack, "signature") {
         // Checkerboard behind the picture shows which parts are see-through. With the eraser on,
         // dragging over the picture rubs marks out.
         BoxWithConstraints(
@@ -547,7 +548,7 @@ fun BrandingScreen(vm: ScanViewModel, onBack: () -> Unit, onScanCutout: () -> Un
     var college by rememberSaveable { mutableStateOf(b.collegeName) }
     var signatory by rememberSaveable { mutableStateOf(b.signatory) }
 
-    ToolScaffold("College stamp & signature", onBack) {
+    ToolScaffold("College stamp & signature", onBack, "stamp") {
         Text(
             "Used by the stamp options when you save a scan: \"ATTESTED - TRUE COPY\", college seal and principal's signature. For the letter pad, tick \"Space for letter pad\" when saving.",
             style = MaterialTheme.typography.bodyMedium,

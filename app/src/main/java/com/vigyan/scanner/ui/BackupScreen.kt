@@ -43,7 +43,7 @@ fun BackupScreen(vm: ScanViewModel, onBack: () -> Unit) {
     var pending by rememberSaveable { mutableStateOf<Uri?>(null) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) pending = uri }
 
-    ToolScaffold("Backup & restore", onBack) {
+    ToolScaffold("Backup & restore", onBack, "backup") {
         Text(
             "Each phone keeps its own backup. It contains only this phone's scans, saved signatures, form templates and college seal/signature, " +
                 "and it goes only where you save it: this phone, or your own Google Drive. Nothing is shared with other staff.",

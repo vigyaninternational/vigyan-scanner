@@ -163,7 +163,7 @@ fun AppLockScreen(onBack: () -> Unit, say: (String) -> Unit) {
     var confirm by rememberSaveable { mutableStateOf("") }
     val canFinger = remember { fingerprintAvailable(context) }
 
-    ToolScaffold("App lock", onBack) {
+    ToolScaffold("App lock", onBack, "backup") {
         Text(
             "Protects Aadhaar numbers, marksheets and forms on this phone. The PIN is stored only on this phone.",
             style = MaterialTheme.typography.bodyMedium,
