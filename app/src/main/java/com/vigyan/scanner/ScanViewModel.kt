@@ -616,16 +616,38 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
         val background: Int? = android.graphics.Color.WHITE,
         val brightness: Float = 0f,
         val contrast: Float = 1f,
-    )
+        /** Cropped by hand: left, top and width as fractions of the photo (width < 0 = automatic). */
+        val cropX: Float = 0f,
+        val cropY: Float = 0f,
+        val cropW: Float = -1f,
+        /** Name and date printed in a white strip at the bottom (some portals ask for it). */
+        val label: Boolean = false,
+        val labelName: String = "",
+        val labelDate: String = SimpleDateFormat("dd/MM/yyyy", Locale.US).format(Date()),
+    ) {
+        val manual get() = cropW > 0f
+
+        /** The size of the picture part (above the name strip, when there is one). */
+        val pictureSize get() = if (label) size.copy(heightMm = size.heightMm * (1 - Passport.STRIP)) else size
+    }
 
     private val _passportLook = MutableStateFlow(PassportLook())
     val passportLook: StateFlow<PassportLook> = _passportLook
+
+    /** The photo as picked, for cropping by hand. */
+    fun passportOriginal(): android.graphics.Bitmap? = passportSource
+
+    private fun finishPassport(cut: Passport.Cut, look: PassportLook): android.graphics.Bitmap {
+        val photo = Passport.render(cut, look.background, look.brightness, look.contrast)
+        if (!look.label) return photo
+        return Passport.withLabel(photo, look.labelName, look.labelDate, look.size.widthPx, look.size.heightPx).also { photo.recycle() }
+    }
 
     private fun newPassportSource(bmp: android.graphics.Bitmap) {
         passportSource = bmp
         passportCut = null
         _passport.value = null
-        _passportLook.value = _passportLook.value.copy(zoom = 1f, shiftX = 0f, shiftY = 0f)
+        _passportLook.value = _passportLook.value.copy(zoom = 1f, shiftX = 0f, shiftY = 0f, cropW = -1f)
     }
 
     fun passportFromUri(uri: Uri, then: () -> Unit) = work("Opening photo…") {
@@ -641,9 +663,12 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun cutPassport(look: PassportLook) {
         val src = passportSource ?: error("Pick a photo first")
         _passportLook.value = look
-        val cut = Passport.cut(src, look.size, look.zoom, look.shiftX, look.shiftY)
+        val cut = Passport.cut(
+            src, look.pictureSize, look.zoom, look.shiftX, look.shiftY,
+            manual = if (look.manual) floatArrayOf(look.cropX, look.cropY, look.cropW) else null,
+        )
         passportCut = cut
-        val photo = withContext(Dispatchers.Default) { Passport.render(cut, look.background, look.brightness, look.contrast) }
+        val photo = withContext(Dispatchers.Default) { finishPassport(cut, look) }
         _passport.value = Passport.Result(photo, cut.faceFound)
         when {
             !cut.faceFound -> _message.value = "No face found: cropped from the centre. Use a clear, front-facing photo."
@@ -656,10 +681,15 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Background, brightness or contrast: quick, no new crop. */
     fun restylePassport(look: PassportLook) {
+        // Turning the name strip on or off changes the picture's shape: crop again.
+        if (look.label != _passportLook.value.label) {
+            makePassport(look)
+            return
+        }
         _passportLook.value = look
         val cut = passportCut ?: return
         viewModelScope.launch {
-            val photo = withContext(Dispatchers.Default) { Passport.render(cut, look.background, look.brightness, look.contrast) }
+            val photo = withContext(Dispatchers.Default) { finishPassport(cut, look) }
             _passport.value = Passport.Result(photo, cut.faceFound)
         }
     }
@@ -668,7 +698,7 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
     fun rotatePassport(clockwise: Boolean) = work("Turning…") {
         val src = passportSource ?: error("Pick a photo first")
         passportSource = io { Images.rotateOnWhite(src, if (clockwise) 90f else -90f) }
-        cutPassport(_passportLook.value.copy(shiftX = 0f, shiftY = 0f))
+        cutPassport(_passportLook.value.copy(shiftX = 0f, shiftY = 0f, cropW = -1f))
     }
 
     enum class PassportOutput(val label: String) {

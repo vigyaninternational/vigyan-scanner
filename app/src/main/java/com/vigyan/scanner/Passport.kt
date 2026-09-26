@@ -34,7 +34,26 @@ object Passport {
         "Light grey" to Color.rgb(225, 225, 225),
     )
 
-    suspend fun cut(source: Bitmap, size: PhotoSize, zoom: Float, shiftX: Float, shiftY: Float): Cut {
+    /** Share of the photo's height used by the name and date strip. */
+    const val STRIP = 0.18f
+
+    /**
+     * [manual] = a crop drawn by hand: left, top and width as fractions of [source] (the height
+     * follows from the photo's shape). Otherwise the crop is placed around the face.
+     */
+    suspend fun cut(source: Bitmap, size: PhotoSize, zoom: Float, shiftX: Float, shiftY: Float, manual: FloatArray? = null): Cut {
+        val aspectHand = size.widthMm / size.heightMm
+        if (manual != null) {
+            val w = (manual[2] * source.width).coerceIn(10f, source.width.toFloat())
+            val h = (w / aspectHand).coerceAtMost(source.height.toFloat())
+            val ww = h * aspectHand
+            val left = (manual[0] * source.width).coerceIn(0f, source.width - ww).toInt()
+            val top = (manual[1] * source.height).coerceIn(0f, source.height - h).toInt()
+            val cropped = Bitmap.createBitmap(source, left, top, ww.toInt().coerceIn(1, source.width - left), h.toInt().coerceIn(1, source.height - top))
+            val photo = Bitmap.createScaledBitmap(cropped, size.widthPx, size.heightPx, true)
+            if (cropped !== source && cropped !== photo) cropped.recycle()
+            return Cut(photo, runCatching { personMask(photo) }.getOrNull(), true)
+        }
         val detector = FaceDetection.getClient(
             FaceDetectorOptions.Builder().setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE).build(),
         )
@@ -105,6 +124,41 @@ object Passport {
             px[i] = (0xFF shl 24) or (r.toInt() shl 16) or (g.toInt() shl 8) or b.toInt()
         }
         return Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888)
+    }
+
+    /**
+     * The photo on top and a white strip below with the name (bold) and the date, black text
+     * shrunk to fit, the whole thing exactly [width]×[height] pixels.
+     */
+    fun withLabel(photo: Bitmap, name: String, date: String, width: Int, height: Int): Bitmap {
+        val out = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val c = Canvas(out)
+        c.drawColor(Color.WHITE)
+        val photoH = (height * (1 - STRIP)).toInt()
+        c.drawBitmap(photo, null, RectF(0f, 0f, width.toFloat(), photoH.toFloat()), Paint(Paint.FILTER_BITMAP_FLAG))
+        val lines = listOf(name.trim().uppercase(), date.trim()).filter { it.isNotEmpty() }
+        if (lines.isEmpty()) return out
+        val stripH = height - photoH
+        val pad = width * 0.04f
+        val paints = lines.mapIndexed { i, line ->
+            Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.BLACK
+                textAlign = Paint.Align.CENTER
+                isFakeBoldText = i == 0
+                typeface = android.graphics.Typeface.create(android.graphics.Typeface.SANS_SERIF, if (i == 0) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
+                // As big as the strip allows, then smaller until the line fits the width.
+                textSize = stripH * (if (lines.size == 2) 0.36f else 0.5f)
+                while (textSize > 8f && measureText(line) > width - 2 * pad) textSize *= 0.92f
+            }
+        }
+        val total = paints.sumOf { (it.textSize * 1.15f).toDouble() }.toFloat()
+        var y = photoH + (stripH - total) / 2
+        lines.forEachIndexed { i, line ->
+            val p = paints[i]
+            y += p.textSize * 1.15f
+            c.drawText(line, width / 2f, y - p.textSize * 0.2f, p)
+        }
+        return out
     }
 
     /** 6 x 4 inch photo paper at 300 dpi, as many copies as fit, with thin cutting lines. */

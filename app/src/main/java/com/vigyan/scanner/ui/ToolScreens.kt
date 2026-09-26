@@ -108,6 +108,9 @@ fun PassportScreen(vm: ScanViewModel, onBack: () -> Unit) {
     var gap by rememberSaveable { mutableStateOf("2") }
     var cols by rememberSaveable { mutableStateOf("") }
     var rows by rememberSaveable { mutableStateOf("") }
+    var labelName by rememberSaveable { mutableStateOf(vm.passportLook.value.labelName) }
+    var labelDate by rememberSaveable { mutableStateOf(vm.passportLook.value.labelDate) }
+    var handCrop by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { if (vm.passport.value == null) vm.makePassport() }
 
@@ -150,19 +153,48 @@ fun PassportScreen(vm: ScanViewModel, onBack: () -> Unit) {
             }) { Text("Use") }
         }
 
-        Text("Face size", style = MaterialTheme.typography.titleSmall)
-        Slider(value = zoom, onValueChange = { zoom = it }, valueRange = 0.75f..1.3f, onValueChangeFinished = { vm.makePassport(look.copy(zoom = zoom)) })
-        Text("Move and turn", style = MaterialTheme.typography.titleSmall)
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            OutlinedButton(onClick = { vm.makePassport(look.copy(shiftX = look.shiftX + 0.04f)) }) { Text("←") }
-            OutlinedButton(onClick = { vm.makePassport(look.copy(shiftX = look.shiftX - 0.04f)) }) { Text("→") }
-            OutlinedButton(onClick = { vm.makePassport(look.copy(shiftY = look.shiftY + 0.04f)) }) { Text("↑") }
-            OutlinedButton(onClick = { vm.makePassport(look.copy(shiftY = look.shiftY - 0.04f)) }) { Text("↓") }
+        Text("Crop", style = MaterialTheme.typography.titleSmall)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Button(onClick = { handCrop = true }) { Text("✂ Crop by hand") }
+            if (look.manual) TextButton(onClick = { vm.makePassport(look.copy(cropW = -1f)) }) { Text("Back to automatic") }
+        }
+        if (look.manual) {
+            Text("Cropped by hand. Face size and ← → ↑ ↓ work on the automatic crop.", style = MaterialTheme.typography.bodySmall)
+        } else {
+            Text("Face size", style = MaterialTheme.typography.titleSmall)
+            Slider(value = zoom, onValueChange = { zoom = it }, valueRange = 0.75f..1.3f, onValueChangeFinished = { vm.makePassport(look.copy(zoom = zoom)) })
+            Text("Move", style = MaterialTheme.typography.titleSmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                OutlinedButton(onClick = { vm.makePassport(look.copy(shiftX = look.shiftX + 0.04f)) }) { Text("←") }
+                OutlinedButton(onClick = { vm.makePassport(look.copy(shiftX = look.shiftX - 0.04f)) }) { Text("→") }
+                OutlinedButton(onClick = { vm.makePassport(look.copy(shiftY = look.shiftY + 0.04f)) }) { Text("↑") }
+                OutlinedButton(onClick = { vm.makePassport(look.copy(shiftY = look.shiftY - 0.04f)) }) { Text("↓") }
+            }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             OutlinedButton(onClick = { vm.rotatePassport(clockwise = false) }) { Text("⟲ Turn left") }
             OutlinedButton(onClick = { vm.rotatePassport(clockwise = true) }) { Text("⟳ Turn right") }
-            TextButton(onClick = { vm.makePassport(look.copy(zoom = 1f, shiftX = 0f, shiftY = 0f)) }) { Text("Reset") }
+            TextButton(onClick = { vm.makePassport(look.copy(zoom = 1f, shiftX = 0f, shiftY = 0f, cropW = -1f)) }) { Text("Reset") }
+        }
+
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(
+                        checked = look.label,
+                        onCheckedChange = { on -> vm.restylePassport(look.copy(label = on, labelName = labelName, labelDate = labelDate)) },
+                    )
+                    Text("Name and date at the bottom of the photo", style = MaterialTheme.typography.titleSmall)
+                }
+                Text("Some portals (SSC, UPSC, banks…) want the name and the date the photo was taken printed below the face.", style = MaterialTheme.typography.bodySmall)
+                if (look.label) {
+                    OutlinedTextField(labelName, { labelName = it }, singleLine = true, label = { Text("Name") }, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(labelDate, { labelDate = it }, singleLine = true, label = { Text("Date (dd/mm/yyyy)") }, modifier = Modifier.fillMaxWidth())
+                    Button(onClick = { vm.restylePassport(look.copy(labelName = labelName, labelDate = labelDate)) }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Put on the photo")
+                    }
+                }
+            }
         }
 
         Text("Background", style = MaterialTheme.typography.titleSmall)
@@ -219,6 +251,77 @@ fun PassportScreen(vm: ScanViewModel, onBack: () -> Unit) {
                 SendButtons(enabled = result != null, onDenied = { vm.say("Storage permission is needed to save to the phone") }) { target ->
                     vm.exportPassport(output, target, maxKb.toIntOrNull()?.coerceAtLeast(5) ?: 50, setup)
                 }
+            }
+        }
+    }
+    if (handCrop) HandCropDialog(vm, look) { handCrop = false }
+}
+
+/** Drag a frame of the photo's shape over the picture; the slider sets its size. */
+@Composable
+private fun HandCropDialog(vm: ScanViewModel, look: ScanViewModel.PassportLook, onDismiss: () -> Unit) {
+    val src = vm.passportOriginal()
+    if (src == null) {
+        onDismiss()
+        return
+    }
+    val aspect = look.pictureSize.widthMm / look.pictureSize.heightMm
+    // Widest frame that still fits the picture's height.
+    val maxW = minOf(1f, src.height * aspect / src.width)
+    var fw by remember { mutableFloatStateOf(if (look.manual) look.cropW.coerceAtMost(maxW) else maxW * 0.6f) }
+    var fx by remember { mutableFloatStateOf(if (look.manual) look.cropX else (1f - maxW * 0.6f) / 2) }
+    var fy by remember { mutableFloatStateOf(if (look.manual) look.cropY else 0.1f) }
+    fun fh() = fw * src.width / aspect / src.height
+    fun clamp() {
+        fx = fx.coerceIn(0f, (1f - fw).coerceAtLeast(0f))
+        fy = fy.coerceIn(0f, (1f - fh()).coerceAtLeast(0f))
+    }
+
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Column(Modifier.fillMaxSize().background(Color.Black).padding(12.dp)) {
+            Text("Drag the frame over the head and shoulders. The slider makes it bigger or smaller.", color = Color.White)
+            BoxWithConstraints(Modifier.fillMaxWidth().weight(1f).padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
+                val boxW = constraints.maxWidth.toFloat()
+                val boxH = constraints.maxHeight.toFloat()
+                val s = minOf(boxW / src.width, boxH / src.height)
+                val dispW = src.width * s
+                val dispH = src.height * s
+                val density = androidx.compose.ui.platform.LocalDensity.current
+                Box(Modifier.width(with(density) { dispW.toDp() }).height(with(density) { dispH.toDp() })) {
+                    Image(src.asImageBitmap(), "Photo", modifier = Modifier.fillMaxSize())
+                    Canvas(
+                        Modifier.fillMaxSize().pointerInput(dispW, dispH) {
+                            detectDragGestures { change, amount ->
+                                change.consume()
+                                fx += amount.x / dispW
+                                fy += amount.y / dispH
+                                clamp()
+                            }
+                        },
+                    ) {
+                        val l = fx * size.width
+                        val t = fy * size.height
+                        val w = fw * size.width
+                        val h = fh() * size.height
+                        val dim = Color.Black.copy(alpha = 0.55f)
+                        drawRect(dim, Offset.Zero, Size(size.width, t))
+                        drawRect(dim, Offset(0f, t + h), Size(size.width, size.height - t - h))
+                        drawRect(dim, Offset(0f, t), Size(l, h))
+                        drawRect(dim, Offset(l + w, t), Size(size.width - l - w, h))
+                        drawRect(Color.White, Offset(l, t), Size(w, h), style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3.dp.toPx()))
+                    }
+                }
+            }
+            Slider(value = fw, onValueChange = { fw = it; clamp() }, valueRange = (maxW * 0.1f)..maxW)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = onDismiss) { Text("Cancel", color = Color.White) }
+                Button(onClick = {
+                    vm.makePassport(look.copy(cropX = fx, cropY = fy, cropW = fw))
+                    onDismiss()
+                }) { Text("Use this crop") }
             }
         }
     }
