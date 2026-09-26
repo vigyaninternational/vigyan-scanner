@@ -29,6 +29,13 @@ object FormExtractor {
         Field("admission", "Admission / Registration no.", "AdmissionNo"),
         Field("address", "Address", "Address", multiLine = true),
         Field("pin", "PIN code", "PinCode"),
+        // From marksheets and pass certificates (10th, +2…).
+        Field("school", "School / college", "SchoolName"),
+        Field("exam", "Exam passed (and year)", "ExamPassed"),
+        Field("marks", "Marks (subject-wise)", "Marks", multiLine = true),
+        Field("total", "Total marks", "TotalMarks"),
+        Field("percent", "Percentage", "Percentage"),
+        Field("grade", "Grade / division", "Grade"),
     )
 
     private const val OPT_NO = """(?:\s*(?:no|number|num|code)\b\.?)?"""
@@ -41,7 +48,9 @@ object FormExtractor {
         "father" to """father['’]?s?\s*/?\s*(?:guardian['’]?s?)?\s*name|name\s*of\s*(?:the\s*)?(?:father|guardian)|father['’]?s?$NOT_A_NAME|guardian['’]?s?\s*name|guardian['’]?s?$NOT_A_NAME|\bs\s*/\s*o\b|\bd\s*/\s*o\b|\bc\s*/\s*o\b""",
         "mother" to """mother['’]?s?\s*name|name\s*of\s*(?:the\s*)?mother|mother['’]?s?$NOT_A_NAME""",
         "name" to """(?:student['’]?s?|candidate['’]?s?|applicant['’]?s?|full)\s*name|name\s*of\s*(?:the\s*)?(?:student|candidate|applicant)|name""",
-        "dob" to """date\s*of\s*birth|birth\s*date|d\s*\.?\s*o\s*\.?\s*b\b\.?|year\s*of\s*birth""",
+        "dob" to """date\s*of\s*birth|birth\s*date|d\s*\.?\s*o\s*\.?\s*b\b\.?|year\s*of\s*birth|born\s*on""",
+        "grade" to """grade(?!\s*point)|division""",
+        "school" to """(?:name\s*of\s*(?:the\s*)?)?(?:last\s+)?(?:school|college|institution)(?:\s*(?:last\s+)?(?:attended|name))?(?!\s*(?:code|leaving|certificate|examination|board))""",
         "gender" to """gender|sex""",
         "mobile" to """mobile$OPT_NO|mob\b\.?$OPT_NO|phone$OPT_NO|contact$OPT_NO|whats\s*app$OPT_NO""",
         "email" to """e\s*-?\s*mail(?:\s*id|\s*address)?""",
@@ -107,6 +116,17 @@ object FormExtractor {
         first("admission", ::cleanId)
         first("address") { v -> v.replace(GAP, ", ").trim(' ', ',').takeIf { it.length >= 4 } }
         first("pin") { v -> PIN.find(v)?.let { it.groupValues[1] + it.groupValues[2] } }
+        first("school", ::cleanSchool)
+        first("grade", ::cleanGrade)
+
+        // Board pass certificates and marksheets word things differently (no "Name:" labels).
+        certificate(lines, out)
+        val marks = MarksheetExtractor.extract(text)
+        if (marks.subjects.size >= 3) {
+            out["marks"] = marks.subjects.joinToString("\n") { "${it.subject}: ${it.obtained}/${it.max}" }
+            out["total"] = "${marks.total} / ${marks.max}"
+            out["percent"] = marks.percentText()
+        }
 
         // Mobiles: labelled ones first, then any other Indian mobile number in the text.
         val mobiles = LinkedHashSet<String>()
@@ -207,6 +227,99 @@ object FormExtractor {
             h.start <= 4 || sorted.any { it !== h && it.end <= h.start } ||
                 line.substring(h.end).trimStart().startsWith(":") || line.substring(h.end).trimStart().startsWith("-")
         }
+    }
+
+    private val CERTIFIED = Regex("""cert\w*\s+th\w*\s*[:\-]?\s*""", RegexOption.IGNORE_CASE)
+    private val CHILD_OF = Regex("""(?<![a-z])(?:son|daughter|ward)(?:\s*/\s*(?:son|daughter|ward))*\s+of(?![a-z])\s*[:\-]?\s*""", RegexOption.IGNORE_CASE)
+    private val AND_LEAD = Regex("""^and(?![a-z])\s*""", RegexOption.IGNORE_CASE)
+    private val ROLE = Regex("""\(?\s*(?<![a-z])(mother|father|guardian)(?![a-z])\s*\)?""", RegexOption.IGNORE_CASE)
+    private val FROM_LEAD = Regex("""^from(?![a-z])\s*[:\-]?\s*""", RegexOption.IGNORE_CASE)
+    private val EXAM = Regex(
+        """(?:high\s+school\s+certificate|higher\s+secondary(?:\s+certificate)?|secondary\s+school(?:\s+certificate)?|senior\s+school\s+certificate|all\s+india\s+secondary\s+school|matriculation|intermediate|annual\s+secondary)\s+examination""",
+        RegexOption.IGNORE_CASE,
+    )
+    private val YEAR = Regex("""(?<!\d)(19|20)\d{2}(?!\d)""")
+
+    /**
+     * Pass certificates (e.g. BSE Odisha 10th): "Certified that NAME", "Son/Daughter of X (Mother)",
+     * "and Y (Father)", "born on 21/12/2008", "…Examination held … February - 2024", "from SCHOOL".
+     */
+    private fun certificate(lines: List<String>, out: MutableMap<String, String>) {
+        if ("name" !in out) {
+            for ((i, l) in lines.withIndex()) {
+                val m = CERTIFIED.find(l)?.takeIf { it.range.first <= 4 } ?: continue
+                val v = l.substring(m.range.last + 1).ifBlank { lines.getOrNull(i + 1).orEmpty() }
+                cleanName(v)?.let { out["name"] = it }
+                break
+            }
+        }
+
+        if ("exam" !in out) {
+            lines.firstNotNullOfOrNull { EXAM.find(it)?.value }?.let { exam ->
+                val year = lines.firstNotNullOfOrNull { l ->
+                    if (Regex("""held|month|examination|session""", RegexOption.IGNORE_CASE).containsMatchIn(l)) YEAR.find(l)?.value else null
+                }
+                out["exam"] = titleCase(exam) + (year?.let { " $it" } ?: "")
+            }
+        }
+
+        if ("school" !in out) {
+            for ((i, l) in lines.withIndex()) {
+                val m = FROM_LEAD.find(l) ?: continue
+                val before = (maxOf(0, i - 2) until i).joinToString(" ") { lines[it] }
+                if (!Regex("""examination|passed|held|studied""", RegexOption.IGNORE_CASE).containsMatchIn(before)) continue
+                cleanSchool(l.substring(m.range.last + 1))?.let { out["school"] = it }
+                break
+            }
+        }
+
+        val c = lines.indexOfFirst { CHILD_OF.containsMatchIn(it) }
+        if (c < 0) return
+        // The name is often the capital-letter line just above "Son/Daughter of".
+        if ("name" !in out && c > 0) {
+            Regex("""([A-Z][A-Z.' ]{3,}[A-Z])\s*$""").find(lines[c - 1])?.let { m -> cleanName(m.groupValues[1])?.let { out["name"] = it } }
+        }
+        // Parents, with "(Mother)" / "(Father)" beside them when the certificate says which is which.
+        val parts = mutableListOf<Pair<String, String?>>()
+        fun take(text: String, next: String?) {
+            text.split(Regex("""\s+and\s+""", RegexOption.IGNORE_CASE)).forEach { piece ->
+                val role = ROLE.find(piece)
+                val namePart = if (role != null) piece.substring(0, role.range.first) else piece
+                var r = role?.groupValues?.get(1)?.lowercase()
+                if (r == null && next != null) r = ROLE.matchEntire(next.trim())?.groupValues?.get(1)?.lowercase()
+                if (namePart.isNotBlank()) parts += namePart to r
+            }
+        }
+        val m = CHILD_OF.find(lines[c])!!
+        take(lines[c].substring(m.range.last + 1), lines.getOrNull(c + 1))
+        for (j in c + 1..minOf(c + 2, lines.lastIndex)) {
+            if (AND_LEAD.containsMatchIn(lines[j])) {
+                take(AND_LEAD.replace(lines[j], ""), lines.getOrNull(j + 1))
+                break
+            }
+        }
+        val unknown = mutableListOf<String>()
+        parts.forEach { (text, role) ->
+            val n = cleanName(text) ?: return@forEach
+            when (role) {
+                "mother" -> if ("mother" !in out) out["mother"] = n
+                "father", "guardian" -> if ("father" !in out) out["father"] = n
+                else -> unknown += n
+            }
+        }
+        unknown.forEach { n -> if ("father" !in out) out["father"] = n else if ("mother" !in out) out["mother"] = n }
+    }
+
+    private fun titleCase(s: String) = s.lowercase().split(Regex("""\s+""")).joinToString(" ") { it.replaceFirstChar(Char::uppercase) }
+
+    private fun cleanSchool(v: String): String? =
+        v.split(GAP).firstOrNull { it.isNotBlank() }?.trim(' ', ':', '-', '.', ',')
+            ?.takeIf { it.count(Char::isLetter) >= 4 }
+
+    private fun cleanGrade(v: String): String? {
+        val t = v.split(GAP).firstOrNull { it.isNotBlank() }?.trim(' ', ':', '-', '.') ?: return null
+        return Regex("""^(?:[A-F][1-2]?[+]?|O|first|second|third|distinction|pass(?:ed)?)(?:\s+division)?$""", RegexOption.IGNORE_CASE)
+            .find(t)?.value?.uppercase()
     }
 
     private fun cleanName(v: String): String? {

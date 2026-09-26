@@ -292,3 +292,62 @@ class CutoutDarknessTest {
         assertTrue((dark.pixels[i] and 0xFF) < (plain.pixels[i] and 0xFF))
     }
 }
+
+class BoardCertificateTest {
+    // BSE Odisha HSC (10th) pass certificate, as rows read from the scan.
+    private val rows = """
+        ROLL NO. : 005FA0239   SL. NO. : 124474439
+        DISTRICT : KORAPUT   SCHOOL CODE : 200FA
+        Board of Secondary Education, Odisha
+        HIGH SCHOOL CERTIFICATE EXAMINATION
+        REGULAR
+        Certified that   PRAGYNA PARAMITA NAYAK
+        Son/Daughter of   SUSHILA PARAJA   (Mother)
+        and   KAMALA LOCHAN PARAJA   (Father)
+        born on   21/12/2008   passed the High School Certificate
+        Examination held during the month of February - 2024
+        from   SARASWATI SHISHU VIDYA MANDIR, KORAPUT
+        SUBJECTS AND MARKS SECURED
+        SUBJECT CODE   SUBJECT   FULL MARKS   MARKS SECURED
+        FLO   FIRST LANGUAGE ODIA   100   70
+        SLE   SECOND LANGUAGE ENGLISH   100   69
+        TLS   THIRD LANGUAGE SANSKRIT   100   87
+        MTH   MATHEMATICS   100   46
+        GSC   GENERAL SCIENCE   100   46
+        SSC   SOCIAL SCIENCE   100   51
+        TOTAL   600   369
+        ( THREE HUNDRED AND SIXTY NINE )
+        GRADE
+        B2
+        DATE OF PUBLICATION OF RESULT
+        26/06/2024
+    """.trimIndent()
+
+    @Test
+    fun readsTheCertificate() {
+        val f = FormExtractor.extract(rows)
+        assertEquals("PRAGYNA PARAMITA NAYAK", f["name"])
+        assertEquals("SUSHILA PARAJA", f["mother"])
+        assertEquals("KAMALA LOCHAN PARAJA", f["father"])
+        assertEquals("21/12/2008", f["dob"])
+        assertEquals("005FA0239", f["roll"])
+        assertEquals("SARASWATI SHISHU VIDYA MANDIR, KORAPUT", f["school"])
+        assertEquals("High School Certificate Examination 2024", f["exam"])
+        assertEquals("369 / 600", f["total"])
+        assertEquals("61.50", f["percent"])
+        assertEquals("B2", f["grade"])
+        val marks = f.getValue("marks").lines()
+        assertEquals(6, marks.size)
+        assertEquals("First Language Odia: 70/100", marks[0])
+        assertEquals("Mathematics: 46/100", marks[3])
+    }
+
+    @Test
+    fun parentsWithoutRoleWordsAndOnOneLine() {
+        val f = FormExtractor.extract("Certified that RAVI KUMAR\nSon of HARI PRASAD and GITA DEVI\nborn on 05-06-2009")
+        assertEquals("RAVI KUMAR", f["name"])
+        assertEquals("HARI PRASAD", f["father"])
+        assertEquals("GITA DEVI", f["mother"])
+        assertEquals("05/06/2009", f["dob"])
+    }
+}
