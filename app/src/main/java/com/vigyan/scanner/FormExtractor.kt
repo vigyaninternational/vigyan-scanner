@@ -274,9 +274,14 @@ object FormExtractor {
         val runs = mutableListOf<List<String>>()
         var run = mutableListOf<String>()
         for (t in tokens) {
-            val w = t.trim('.', '\'')
-            if (w.isNotEmpty() && Regex("""[A-Z][A-Z.']*""").matches(t) && w !in NOT_NAME_WORDS) {
-                run += t.trimEnd('.')
+            val word = capsWord(t)
+            if (word != null && word !in NOT_NAME_WORDS) {
+                // "ofSUSHILA": a label word glued to the name ends the run before it.
+                if (word != t.trim('.', '\'', '’') && !t.first().isUpperCase() && run.isNotEmpty()) {
+                    runs += run
+                    run = mutableListOf()
+                }
+                run += word
             } else {
                 if (run.isNotEmpty()) runs += run
                 run = mutableListOf()
@@ -286,6 +291,23 @@ object FormExtractor {
         val best = runs.filter { r -> r.size >= 2 || r[0].length >= 3 }
             .maxByOrNull { r -> r.size * 100 + r.sumOf { it.length } } ?: return null
         return best.joinToString(" ").takeIf { it.count(Char::isLetter) >= 3 }
+    }
+
+    /**
+     * A capital-letter word as the reader gave it, tidied: "SUSHILA", "ofSUSHILA" (glued to the
+     * label before it) → SUSHILA, "SUSHlLA" (a small l for I) → SUSHILA. Null if it isn't one.
+     */
+    private fun capsWord(token: String): String? {
+        val t = token.trim('.', '\'', '’', '"')
+        if (t.isEmpty()) return null
+        if (Regex("""[A-Z][A-Z.']*""").matches(t)) return t.trimEnd('.')
+        // Glued to a short lower-case label word: "ofSUSHILA", "o'SUSHILA".
+        Regex("""^[a-z'’]{1,3}([A-Z][A-Z.']{2,})$""").find(t)?.let { return it.groupValues[1].trimEnd('.') }
+        // Mostly capitals with a misread l/i: "SUSHlLA".
+        if (t.length >= 4 && t.first().isUpperCase() && t.all { it.isLetter() } && t.count { it.isUpperCase() } >= t.length - 1 &&
+            t.filter { it.isLowerCase() }.all { it == 'l' || it == 'i' }
+        ) return t.uppercase()
+        return null
     }
 
     /**
@@ -301,11 +323,25 @@ object FormExtractor {
             if (l.substring(role.range.last + 1).trim().trimStart(')').isNotBlank()) continue
             val key = if (role.value.lowercase().startsWith("m")) "mother" else "father"
             if (firstRoleLine < 0) firstRoleLine = i
-            if (key in out) continue
+            val have = out[key]
+            // A one-word name (only the surname came through) may still be completed below.
+            if (have != null && have.trim().contains(' ')) continue
+            val others = listOf(out["name"], out["mother"], out["father"]).filter { it != have }
             val candidates = listOf(l.substring(0, role.range.first), lines.getOrNull(i - 1).orEmpty())
-            val name = candidates.firstNotNullOfOrNull { c ->
-                capsName(c)?.takeIf { it != out["name"] && it != out["mother"] && it != out["father"] && ROLE_WORD.find(c) == null }
-            } ?: continue
+            var name = candidates.firstNotNullOfOrNull { c ->
+                capsName(c)?.takeIf { it !in others && ROLE_WORD.find(c) == null }
+            } ?: have ?: continue
+            // "SUSHILA" read on the row above "PARAJA (Mother)": join the first name back on.
+            if (!name.contains(' ') && i > 0) {
+                val above = lines[i - 1]
+                val tail = Regex("""([A-Z][A-Z.']+(?:\s+[A-Z][A-Z.']+)?)\s*$""").find(above.replace(GAP, " ").trim())?.groupValues?.get(1)
+                    ?.split(Regex("""\s+"""))?.mapNotNull { capsWord(it) }?.filter { it !in NOT_NAME_WORDS }?.joinToString(" ")
+                if (!tail.isNullOrBlank() && ROLE_WORD.find(above) == null && others.none { o -> o != null && (o == tail || o.endsWith(tail)) } &&
+                    !above.contains("certif", ignoreCase = true)
+                ) {
+                    name = "$tail $name"
+                }
+            }
             out[key] = name
         }
         // The student's name is usually the capitals just above the first parent.

@@ -425,3 +425,25 @@ class InkOnlyTest {
         assertEquals("21/12/2008", m["dob"]) // the original reading wins for everything else
     }
 }
+
+class MotherFirstNameTest {
+    @Test
+    fun firstNameGluedToTheLabel() {
+        val f = FormExtractor.extract("Certified that   PRAGYNA PARAMITA NAYAK\nSon'Daughter ofSUSHILA   PARAJA   (Mother)\nand   KAMALA LOCHAN PARAJA   (Father)")
+        assertEquals("SUSHILA PARAJA", f["mother"])
+        assertEquals("KAMALA LOCHAN PARAJA", f["father"])
+    }
+
+    @Test
+    fun firstNameOnTheRowAbove() {
+        val f = FormExtractor.extract("Certified that   PRAGYNA PARAMITA NAYAK\nSon'Danghter of   SUSHILA\nPARAJA   (Mother)\nand   KAMALA LOCHAN PARAJA   (Father)\nborn on 21/12/2008")
+        assertEquals("PRAGYNA PARAMITA NAYAK", f["name"])
+        assertEquals("SUSHILA PARAJA", f["mother"])
+        assertEquals("KAMALA LOCHAN PARAJA", f["father"])
+    }
+
+    @Test
+    fun misreadLetters() {
+        assertEquals("SUSHILA PARAJA", FormExtractor.capsName("SUSHlLA PARAJA"))
+    }
+}
