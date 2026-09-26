@@ -220,6 +220,8 @@ object FormExtractor {
         }.distinctBy { it.start }
             // "School name", "Name of the institution": not the person's name.
             .filterNot { h -> h.field == "name" && (NOT_PERSON.containsMatchIn(line.substring(0, h.start)) || NAME_OF_THING.containsMatchIn(line.substring(h.end))) }
+            // "(Mother)" in brackets marks the name before it; it is not a "Mother:" label.
+            .filterNot { h -> line.substring(0, h.start).trimEnd().endsWith("(") && line.substring(h.end).trimStart().startsWith(")") }
         val sorted = kept.sortedBy { it.start }
         // A bare word like "name" deep inside a sentence is not a label: keep labels near the
         // start of the line, or those followed by a colon/dash.
@@ -229,7 +231,67 @@ object FormExtractor {
         }
     }
 
-    private val CERTIFIED = Regex("""cert\w*\s+th\w*\s*[:\-]?\s*""", RegexOption.IGNORE_CASE)
+    // Script lettering is often misread ("Certifed thal", "Cerlified hat"), so this is loose.
+    private val CERTIFIED = Regex("""c[a-z]{2,9}\s+t?h[a-z]{1,3}(?![a-z])\s*[:\-]?\s*""", RegexOption.IGNORE_CASE)
+
+    /** "(Mother)", "(Father)" beside a parent's name, allowing for a misread letter. */
+    private val ROLE_WORD = Regex("""(?<![a-z])(m[oa]th[ae]r|f[ae]th[ae]r|guardian)(?![a-z])""", RegexOption.IGNORE_CASE)
+
+    private val NOT_NAME_WORDS = setOf(
+        "MOTHER", "FATHER", "GUARDIAN", "CERTIFIED", "THAT", "SON", "DAUGHTER", "WARD", "OF", "AND", "BORN", "ON",
+        "FROM", "REGULAR", "PRIVATE", "EXAMINATION", "CERTIFICATE", "SCHOOL", "HIGH", "BOARD", "MR", "MRS", "MS", "SHRI", "SMT",
+    )
+
+    /**
+     * The person's name written in capitals, even when reading split it into pieces
+     * ("PRAGYNA   PARAMITA   NAYAK"): the longest run of capital-letter words in [text].
+     */
+    fun capsName(text: String): String? {
+        val tokens = text.split(Regex("""[\s/,:;|()]+""")).filter { it.isNotBlank() }
+        val runs = mutableListOf<List<String>>()
+        var run = mutableListOf<String>()
+        for (t in tokens) {
+            val w = t.trim('.', '\'')
+            if (w.isNotEmpty() && Regex("""[A-Z][A-Z.']*""").matches(t) && w !in NOT_NAME_WORDS) {
+                run += t.trimEnd('.')
+            } else {
+                if (run.isNotEmpty()) runs += run
+                run = mutableListOf()
+            }
+        }
+        if (run.isNotEmpty()) runs += run
+        val best = runs.filter { r -> r.size >= 2 || r[0].length >= 3 }
+            .maxByOrNull { r -> r.size * 100 + r.sumOf { it.length } } ?: return null
+        return best.joinToString(" ").takeIf { it.count(Char::isLetter) >= 3 }
+    }
+
+    /**
+     * Parents found by the "(Mother)" / "(Father)" words beside them, for when "Son/Daughter of"
+     * can't be read. The name is on the same row, or the row just above.
+     */
+    private fun parentsByRole(lines: List<String>, out: MutableMap<String, String>) {
+        var firstRoleLine = -1
+        for ((i, l) in lines.withIndex()) {
+            val role = ROLE_WORD.findAll(l).lastOrNull() ?: continue
+            // Only a marker at the end of the row ("… PARAJA (Mother)"); labels like "Mother's name :"
+            // or "Mother tongue" are something else.
+            if (l.substring(role.range.last + 1).trim().trimStart(')').isNotBlank()) continue
+            val key = if (role.value.lowercase().startsWith("m")) "mother" else "father"
+            if (firstRoleLine < 0) firstRoleLine = i
+            if (key in out) continue
+            val candidates = listOf(l.substring(0, role.range.first), lines.getOrNull(i - 1).orEmpty())
+            val name = candidates.firstNotNullOfOrNull { c ->
+                capsName(c)?.takeIf { it != out["name"] && it != out["mother"] && it != out["father"] && ROLE_WORD.find(c) == null }
+            } ?: continue
+            out[key] = name
+        }
+        // The student's name is usually the capitals just above the first parent.
+        if ("name" !in out && firstRoleLine > 0) {
+            (firstRoleLine - 1 downTo maxOf(0, firstRoleLine - 2)).firstNotNullOfOrNull { j ->
+                capsName(lines[j])?.takeIf { it != out["mother"] && it != out["father"] }
+            }?.let { out["name"] = it }
+        }
+    }
     private val CHILD_OF = Regex("""(?<![a-z])(?:son|daughter|ward)(?:\s*/\s*(?:son|daughter|ward))*\s+of(?![a-z])\s*[:\-]?\s*""", RegexOption.IGNORE_CASE)
     private val AND_LEAD = Regex("""^and(?![a-z])\s*""", RegexOption.IGNORE_CASE)
     private val ROLE = Regex("""\(?\s*(?<![a-z])(mother|father|guardian)(?![a-z])\s*\)?""", RegexOption.IGNORE_CASE)
@@ -249,7 +311,8 @@ object FormExtractor {
             for ((i, l) in lines.withIndex()) {
                 val m = CERTIFIED.find(l)?.takeIf { it.range.first <= 4 } ?: continue
                 val v = l.substring(m.range.last + 1).ifBlank { lines.getOrNull(i + 1).orEmpty() }
-                cleanName(v)?.let { out["name"] = it }
+                val found = capsName(v) ?: if (l.contains("certif", ignoreCase = true)) cleanName(v) else null
+                found?.let { out["name"] = it } ?: continue
                 break
             }
         }
@@ -274,7 +337,10 @@ object FormExtractor {
         }
 
         val c = lines.indexOfFirst { CHILD_OF.containsMatchIn(it) }
-        if (c < 0) return
+        if (c < 0) {
+            parentsByRole(lines, out)
+            return
+        }
         // The name is often the capital-letter line just above "Son/Daughter of".
         if ("name" !in out && c > 0) {
             Regex("""([A-Z][A-Z.' ]{3,}[A-Z])\s*$""").find(lines[c - 1])?.let { m -> cleanName(m.groupValues[1])?.let { out["name"] = it } }
@@ -300,7 +366,7 @@ object FormExtractor {
         }
         val unknown = mutableListOf<String>()
         parts.forEach { (text, role) ->
-            val n = cleanName(text) ?: return@forEach
+            val n = capsName(text) ?: cleanName(text) ?: return@forEach
             when (role) {
                 "mother" -> if ("mother" !in out) out["mother"] = n
                 "father", "guardian" -> if ("father" !in out) out["father"] = n
@@ -308,6 +374,7 @@ object FormExtractor {
             }
         }
         unknown.forEach { n -> if ("father" !in out) out["father"] = n else if ("mother" !in out) out["mother"] = n }
+        parentsByRole(lines, out)
     }
 
     private fun titleCase(s: String) = s.lowercase().split(Regex("""\s+""")).joinToString(" ") { it.replaceFirstChar(Char::uppercase) }

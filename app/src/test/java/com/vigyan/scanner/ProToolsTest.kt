@@ -351,3 +351,46 @@ class BoardCertificateTest {
         assertEquals("05/06/2009", f["dob"])
     }
 }
+
+class MessyCertificateTest {
+    @Test
+    fun splitNameAndUnreadableScriptWords() {
+        // The name read as separate pieces; "Son/Daughter of" and "Certified that" misread.
+        val rows = """
+            HIGH SCHOOL CERTIFICATE EXAMINATION
+            REGULAR
+            Cerlifed thal   PRAGYNA   PARAMITA   NAYAK
+            Sen/Daughler af   SUSHILA   PARAJA   (Mother)
+            ond   KAMALA   LOCHAN   PARAJA   (Father)
+            born on   21/12/2008   passed the High School Certificate
+        """.trimIndent()
+        val f = FormExtractor.extract(rows)
+        assertEquals("PRAGYNA PARAMITA NAYAK", f["name"])
+        assertEquals("SUSHILA PARAJA", f["mother"])
+        assertEquals("KAMALA LOCHAN PARAJA", f["father"])
+        assertEquals("21/12/2008", f["dob"])
+    }
+
+    @Test
+    fun roleWordsOnTheirOwnRows() {
+        val rows = """
+            PRAGYNA PARAMITA NAYAK
+            SUSHILA PARAJA
+            (Mother)
+            KAMALA LOCHAN PARAJA
+            (Father)
+            born on 21/12/2008
+        """.trimIndent()
+        val f = FormExtractor.extract(rows)
+        assertEquals("SUSHILA PARAJA", f["mother"])
+        assertEquals("KAMALA LOCHAN PARAJA", f["father"])
+        assertEquals("PRAGYNA PARAMITA NAYAK", f["name"])
+    }
+
+    @Test
+    fun capsNames() {
+        assertEquals("PRAGYNA PARAMITA NAYAK", FormExtractor.capsName("  PRAGYNA   PARAMITA   NAYAK "))
+        assertEquals("SUSHILA PARAJA", FormExtractor.capsName("Son/Daughter of SUSHILA PARAJA (MOTHER)"))
+        assertEquals(null, FormExtractor.capsName("passed the High School Certificate"))
+    }
+}
