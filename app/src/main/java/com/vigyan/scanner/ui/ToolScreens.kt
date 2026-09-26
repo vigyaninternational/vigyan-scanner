@@ -449,7 +449,7 @@ fun BrandingScreen(vm: ScanViewModel, onBack: () -> Unit, onScanCutout: () -> Un
             "Used by the stamp options when you save a scan: \"ATTESTED - TRUE COPY\", college seal and principal's signature. For the letter pad, tick \"Space for letter pad\" when saving.",
             style = MaterialTheme.typography.bodyMedium,
         )
-        OutlinedTextField(college, { college = it }, label = { Text("College name (on stamps and merit lists)") }, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(college, { college = it }, label = { Text("College name (on stamps)") }, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(signatory, { signatory = it }, label = { Text("Signs as (e.g. Principal)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         Button(onClick = { vm.saveBrandingText(college, signatory) }, modifier = Modifier.fillMaxWidth()) { Text("Save") }
 

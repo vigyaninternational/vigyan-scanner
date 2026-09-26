@@ -45,7 +45,7 @@ fun BackupScreen(vm: ScanViewModel, onBack: () -> Unit) {
 
     ToolScaffold("Backup & restore", onBack) {
         Text(
-            "Each phone keeps its own backup. It contains only this phone's scans, document checklist and college seal/signature, " +
+            "Each phone keeps its own backup. It contains only this phone's scans, saved signatures, form templates and college seal/signature, " +
                 "and it goes only where you save it: this phone, or your own Google Drive. Nothing is shared with other staff.",
             style = MaterialTheme.typography.bodyMedium,
         )
@@ -87,7 +87,7 @@ fun BackupScreen(vm: ScanViewModel, onBack: () -> Unit) {
         AlertDialog(
             onDismissRequest = { pending = null },
             title = { Text("Restore this backup?") },
-            text = { Text("Missing scans and checklist students will be added to this phone. Nothing here is deleted.") },
+            text = { Text("Missing scans will be added to this phone. Nothing here is deleted.") },
             confirmButton = { TextButton(onClick = { vm.restore(uri); pending = null }) { Text("Restore") } },
             dismissButton = { TextButton(onClick = { pending = null }) { Text("Cancel") } },
         )

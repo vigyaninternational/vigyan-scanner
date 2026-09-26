@@ -94,7 +94,7 @@ fun DetailScreen(
     onBack: () -> Unit,
     onText: () -> Unit,
     onFill: () -> Unit,
-    /** "marks", "passport", "cutout" or "branding". */
+    /** "passport", "cutout" or "branding". */
     onTool: (String) -> Unit,
 ) {
     val folders by vm.folders.collectAsStateWithLifecycle()
@@ -231,7 +231,7 @@ fun DetailScreen(
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilledTonalButton(onClick = { dialog = "resize" }, modifier = Modifier.weight(1f)) { Text("Resize for portal", maxLines = 1) }
-                FilledTonalButton(onClick = { onTool("marks") }, modifier = Modifier.weight(1f)) { Text("Marksheet") }
+                FilledTonalButton(onClick = { dialog = "excel" }, modifier = Modifier.weight(1f)) { Text("Scan to Excel", maxLines = 1) }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilledTonalButton(
@@ -244,10 +244,9 @@ fun DetailScreen(
                 ) { Text("Cut out signature", maxLines = 1) }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilledTonalButton(onClick = { dialog = "split" }, enabled = scan.pages.size > 1, modifier = Modifier.weight(1f)) {
+                FilledTonalButton(onClick = { dialog = "split" }, enabled = scan.pages.size > 1, modifier = Modifier.fillMaxWidth()) {
                     Text("Split / extract pages", maxLines = 1)
                 }
-                FilledTonalButton(onClick = { dialog = "excel" }, modifier = Modifier.weight(1f)) { Text("Scan to Excel", maxLines = 1) }
             }
 
             Card(Modifier.fillMaxWidth()) {

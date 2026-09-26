@@ -348,29 +348,6 @@ object Exporter {
         }
     }
 
-    /** Merit list as a printable PDF (overall, then category-wise) and/or a CSV for Excel. */
-    fun meritFiles(context: Context, title: String, ranked: List<Merit.Ranked>, wantPdf: Boolean, wantCsv: Boolean): List<File> {
-        val dir = exportDir(context)
-        val base = safeName(title)
-        val out = mutableListOf<File>()
-        if (wantCsv) {
-            val sb = StringBuilder("Rank,Category rank,Name,Roll,Category,Total,Max,Percent\r\n")
-            val catRanks = categoryRanks(ranked)
-            ranked.forEach { r ->
-                val e = r.entry
-                sb.append(listOf(r.rank.toString(), catRanks[e.id]?.toString().orEmpty(), e.name, e.roll, e.category, e.total.toString(), e.max.toString(), Merit.pct(e.percent))
-                    .joinToString(",") { csv(it) }).append("\r\n")
-            }
-            out += File(dir, "$base.csv").apply { writeText(sb.toString()) }
-        }
-        if (wantPdf) out += File(dir, "$base.pdf").also { MeritPdf.write(context, title, ranked, it) }
-        return out
-    }
-
-    fun categoryRanks(ranked: List<Merit.Ranked>): Map<String, Int> =
-        ranked.groupBy { it.entry.category }.filterKeys { it.isNotBlank() }
-            .flatMap { (_, list) -> Merit.rank(list.map { it.entry }).map { it.entry.id to it.rank } }.toMap()
-
     /** One CSV row per filled form. Column names match the Vigyan ERP student CSV import. */
     fun formsCsv(context: Context, forms: List<Map<String, String>>, name: String): File {
         val fields = FormExtractor.FIELDS

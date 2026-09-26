@@ -45,11 +45,8 @@ import com.vigyan.scanner.ui.QuickScanScreen
 import com.vigyan.scanner.ui.CropScreen
 import com.vigyan.scanner.ui.fingerprintAvailable
 import com.vigyan.scanner.ui.BrandingScreen
-import com.vigyan.scanner.ui.ChecklistScreen
 import com.vigyan.scanner.ui.CutoutScreen
-import com.vigyan.scanner.ui.MarksheetScreen
 import com.vigyan.scanner.ui.PassportScreen
-import com.vigyan.scanner.ui.StudentDocsScreen
 import com.vigyan.scanner.ui.rememberScanner
 import com.vigyan.scanner.ui.DetailScreen
 import com.vigyan.scanner.ui.FillScreen
@@ -262,7 +259,7 @@ class MainActivity : FragmentActivity() {
                         onBack = { nav.popBackStack() },
                         onText = { nav.navigate("text/${scan.id}") },
                         onFill = { nav.navigate("fill/${scan.id}") },
-                        onTool = { tool -> nav.navigate(if (tool == "marks") "marks/${scan.id}" else tool) },
+                        onTool = { tool -> nav.navigate(tool) },
                     )
                 }
             }
@@ -335,10 +332,6 @@ class MainActivity : FragmentActivity() {
             }
             composable("backup") { BackupScreen(vm, onBack = { nav.popBackStack() }) }
             composable("applock") { AppLockScreen(onBack = { nav.popBackStack() }, say = vm::say) }
-            composable("marks/{id}") { entry ->
-                scans.firstOrNull { it.id == entry.arguments?.getString("id") }
-                    ?.let { MarksheetScreen(vm, it, onBack = { nav.popBackStack() }) }
-            }
             composable("passport") { PassportScreen(vm, onBack = { nav.popBackStack() }) }
             composable("cutout") {
                 CutoutScreen(vm, onBack = { nav.popBackStack() }, onBranding = { nav.navigate("branding") })
@@ -346,16 +339,6 @@ class MainActivity : FragmentActivity() {
             composable("branding") {
                 val scanner = rememberScanner(onError = vm::say) { uris -> vm.cutoutFromUris(uris) { nav.navigate("cutout") } }
                 BrandingScreen(vm, onBack = { nav.popBackStack() }, onScanCutout = { scanner(1) })
-            }
-            composable("checklist") {
-                ChecklistScreen(vm, onBack = { nav.popBackStack() }, onStudent = { nav.navigate("student/$it") })
-            }
-            composable("student/{id}") { entry ->
-                StudentDocsScreen(
-                    vm, entry.arguments?.getString("id").orEmpty(),
-                    onBack = { nav.popBackStack() },
-                    onOpenScan = { nav.navigate("scan/$it") },
-                )
             }
             composable("text/{id}") { entry ->
                 scans.firstOrNull { it.id == entry.arguments?.getString("id") }

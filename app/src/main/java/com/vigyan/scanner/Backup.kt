@@ -11,16 +11,16 @@ import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 
 /**
- * One phone's own backup: a single .zip with all its scans, the document checklist and the
+ * One phone's own backup: a single .zip with all its scans, saved signatures, form templates and the
  * college seal/signature. It is kept wherever the user saves it (this phone, or their own Google
  * Drive), never shared with other staff. Restoring ADDS what is missing and never deletes.
  */
 object Backup {
 
     private const val INFO = "backup-info.json"
-    private val ROOTS = listOf("scans", "checklist.json", "branding", "signatures", "form_templates")
+    private val ROOTS = listOf("scans", "branding", "signatures", "form_templates")
 
-    class Result(val scansAdded: Int, val scansSkipped: Int, val studentsAdded: Int)
+    class Result(val scansAdded: Int, val scansSkipped: Int)
 
     /** Writes the backup zip; returns how many scans it holds. */
     fun create(context: Context, out: OutputStream): Int {
@@ -103,19 +103,6 @@ object Backup {
             }
         }
 
-        // Checklist: add students (and document names) that aren't here yet.
-        var students = 0
-        val backupList = File(temp, "checklist.json")
-        if (backupList.exists()) {
-            val repo = ChecklistRepository(context)
-            val mine = repo.load()
-            val theirs = ChecklistRepository.parse(backupList.readText())
-            val ids = mine.students.map { it.id }.toSet()
-            val newOnes = theirs.students.filter { it.id !in ids }
-            students = newOnes.size
-            repo.save(ChecklistRepository.Data((mine.types + theirs.types).distinct(), mine.students + newOnes))
-        }
-
         // Seal and signature, saved signatures and form templates: only files this phone doesn't have.
         for (folder in listOf("branding", "signatures", "form_templates")) {
             val mineDir = File(files, folder).apply { mkdirs() }
@@ -130,7 +117,7 @@ object Backup {
         if (!prefs.contains("signatory") && !meta.isNull("signatory")) edit.putString("signatory", meta.getString("signatory"))
         edit.apply()
 
-        return Result(added, skipped, students)
+        return Result(added, skipped)
     }
 
     private fun mergeFolders(mine: File, theirs: File) {

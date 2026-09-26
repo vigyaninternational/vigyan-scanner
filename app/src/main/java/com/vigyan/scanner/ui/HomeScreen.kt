@@ -247,10 +247,6 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit, onNavigate: 
                                 onClick = { menu = false; dialog = "csv" },
                             )
                             DropdownMenuItem(
-                                text = { Text("Merit list (from marksheets)") },
-                                onClick = { menu = false; dialog = "merit" },
-                            )
-                            DropdownMenuItem(
                                 text = { Text("College stamp & signature") },
                                 onClick = { menu = false; onNavigate("branding") },
                             )
@@ -400,14 +396,10 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit, onNavigate: 
                         ActionCard("Resize for portal", "Photo / PDF under X KB", "📐", CardGreen, Modifier.weight(1f)) {
                             resizePicker.launch(arrayOf("image/*", "application/pdf"))
                         }
-                        ActionCard("Document checklist", "Who has submitted what", "✅", CardAmber, Modifier.weight(1f)) { onNavigate("checklist") }
+                        ActionCard("Open photo / PDF", "From WhatsApp, gallery, files", "📂", CardAmber, Modifier.weight(1f)) {
+                            importPicker.launch(arrayOf("image/*", "application/pdf"))
+                        }
                     }
-                }
-                item {
-                    OutlinedButton(
-                        onClick = { importPicker.launch(arrayOf("image/*", "application/pdf")) },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) { Text("📂  Open a photo or PDF from the phone") }
                 }
             }
 
@@ -698,7 +690,6 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit, onNavigate: 
             confirmButton = { TextButton(onClick = { vm.deleteMany(selected); selected = emptyList(); dialog = "" }) { Text("Delete") } },
             dismissButton = { TextButton(onClick = { dialog = "" }) { Text("Cancel") } },
         )
-        "merit" -> MeritDialog(vm, inFolder, folder, onDismiss = { dialog = "" })
         "passport" -> AlertDialog(
             onDismissRequest = { dialog = "" },
             title = { Text("Passport photo") },

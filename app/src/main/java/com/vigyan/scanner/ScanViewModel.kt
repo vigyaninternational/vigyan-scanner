@@ -444,12 +444,10 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
         val result = io {
             ctx.contentResolver.openInputStream(uri)?.use { Backup.restore(ctx, it) } ?: error("Could not open the file")
         }
-        _checklist.value = checklistRepo.load()
         _signatureList.value = signatures.list()
         _brandingVersion.value++
         _message.value = "Restored ${result.scansAdded} scan(s)" +
-            (if (result.scansSkipped > 0) ", ${result.scansSkipped} already here" else "") +
-            (if (result.studentsAdded > 0) ", ${result.studentsAdded} checklist student(s)" else "")
+            (if (result.scansSkipped > 0) ", ${result.scansSkipped} already here" else "")
     }
 
     // ---- Filling in a paper form ----
@@ -908,107 +906,6 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
         _brandingVersion.value++
     }
 
-    // ---- Document checklist ----
-
-    private val checklistRepo = ChecklistRepository(app)
-    private val _checklist = MutableStateFlow(checklistRepo.load())
-    val checklist: StateFlow<ChecklistRepository.Data> = _checklist
-
-    private fun saveChecklist(types: List<String> = _checklist.value.types, students: List<ChecklistStudent>) {
-        val data = ChecklistRepository.Data(types, students)
-        checklistRepo.save(data)
-        _checklist.value = data
-    }
-
-    fun addStudent(name: String, mobile: String, klass: String): String {
-        val id = System.currentTimeMillis().toString()
-        saveChecklist(students = _checklist.value.students + ChecklistStudent(id, name.trim(), mobile.trim(), klass.trim()))
-        _message.value = "${name.trim()} added to the document checklist"
-        return id
-    }
-
-    fun updateStudent(student: ChecklistStudent) =
-        saveChecklist(students = _checklist.value.students.map { if (it.id == student.id) student else it })
-
-    fun deleteStudent(id: String) = saveChecklist(students = _checklist.value.students.filter { it.id != id })
-
-    fun setDoc(studentId: String, type: String, value: String?) {
-        val s = _checklist.value.students.firstOrNull { it.id == studentId } ?: return
-        updateStudent(s.copy(docs = if (value == null) s.docs - type else s.docs + (type to value)))
-    }
-
-    fun setChecklistTypes(types: List<String>) =
-        saveChecklist(types = types.map { it.trim() }.filter { it.isNotEmpty() }.distinct(), students = _checklist.value.students)
-
-    /** Scans one document for a student, names it "<student> - <document>" and ticks it off. */
-    fun scanForStudent(studentId: String, type: String, pages: List<Uri>) = work("Saving…") {
-        val s = _checklist.value.students.firstOrNull { it.id == studentId } ?: error("Student not found")
-        val scan = io { repo.create(pages, "${s.name} - $type", STUDENT_DOCS) }
-        setDoc(studentId, type, scan.id)
-        _message.value = "$type saved for ${s.name}"
-    }
-
-    /** Checklist as a CSV: one row per student, Yes/No per document. */
-    fun exportChecklist(target: Target) = send(target, "Making CSV…") {
-        val data = _checklist.value
-        val ids = _scans.value.map { it.id }.toSet()
-        val sb = StringBuilder()
-        fun cell(v: String) = if (v.any { it == ',' || it == '"' }) "\"" + v.replace("\"", "\"\"") + "\"" else v
-        sb.append((listOf("Name", "Class", "Mobile") + data.types + "Missing").joinToString(",") { cell(it) }).append("\r\n")
-        data.students.sortedBy { it.name.lowercase() }.forEach { s ->
-            val cells = listOf(s.name, s.klass, s.mobile) +
-                data.types.map { if (Checklist.has(s, it, ids)) "Yes" else "No" } +
-                Checklist.missing(s, data.types, ids).size.toString()
-            sb.append(cells.joinToString(",") { cell(it) }).append("\r\n")
-        }
-        val dir = File(ctx.cacheDir, "export").apply { deleteRecursively(); mkdirs() }
-        listOf(File(dir, Exporter.csvName("Document checklist") + ".csv").apply { writeText(sb.toString()) })
-    }
-
-    // ---- Marksheet & merit list ----
-
-    /** Saved marks, or read them from the scan (OCR) with the name and roll number filled in. */
-    fun readMarks(scan: Scan, force: Boolean = false, then: (MarksRecord) -> Unit) = work("Reading the marksheet…") {
-        if (!force) io { repo.loadMarks(scan) }?.let { return@work then(it) }
-        val s = ocrMissing(scan)
-        val rows = s.rows ?: s.text.orEmpty()
-        val found = MarksheetExtractor.extract(rows)
-        val fields = FormExtractor.extract(rows)
-        val saved = io { repo.loadMarks(scan) }
-        then(
-            found.copy(
-                name = saved?.name ?: fields["name"] ?: scan.fields["name"].orEmpty(),
-                roll = saved?.roll ?: fields["roll"] ?: scan.fields["roll"].orEmpty(),
-                category = saved?.category.orEmpty(),
-            ),
-        )
-        if (found.subjects.isEmpty()) _message.value = "No subject marks found. Add them by hand, or rescan more clearly."
-    }
-
-    fun saveMarks(scan: Scan, marks: MarksRecord) = work("Saving…") {
-        io {
-            repo.saveMarks(scan, marks)
-            if (marks.name.isNotBlank() && defaultName.matches(scan.name)) repo.rename(scan, "Marksheet - ${marks.name}")
-        }
-        _message.value = "Marks saved (${Merit.pct(marks.percent)}%)"
-    }
-
-    /** Scans in [scans] with saved marks, ranked. */
-    fun meritEntries(scans: List<Scan>, then: (List<Merit.Ranked>) -> Unit) = work("Collecting marks…") {
-        val entries = io {
-            scans.filter { it.hasMarks }.mapNotNull { s ->
-                repo.loadMarks(s)?.let { m -> Merit.Entry(s.id, m.name.ifBlank { s.name }, m.roll, m.category, m.total, m.maxTotal) }
-            }
-        }
-        then(Merit.rank(entries))
-    }
-
-    fun exportMerit(title: String, ranked: List<Merit.Ranked>, pdf: Boolean, csv: Boolean, target: Target) =
-        send(target, "Making the merit list…") {
-            if (ranked.isEmpty()) error("No saved marksheets here. Open a scanned marksheet and tap Marksheet first.")
-            io { Exporter.meritFiles(ctx, title, ranked, pdf, csv) }
-        }
-
     /**
      * Batch Smart Fill: every [perForm] pages are one form. Each form becomes its own scan in a
      * new folder, filled and named after the person, ready to export as one CSV.
@@ -1235,6 +1132,5 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
         const val KEY_AUTO_SORT = "auto_sort"
         const val KEY_LAST_CHECK = "update_last_check"
         const val KEY_PORTAL_PRESETS = "portal_presets"
-        const val STUDENT_DOCS = "Student documents"
     }
 }
