@@ -103,4 +103,6 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     // Opens the PDFs PdfWriter makes, to check text and password in tests.
     testImplementation("org.apache.pdfbox:pdfbox:2.0.32")
+    // Android's org.json is only a stub in plain unit tests; the real one lets the JSON code be tested.
+    testImplementation("org.json:json:20240303")
 }
