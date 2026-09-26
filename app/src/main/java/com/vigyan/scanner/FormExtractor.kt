@@ -306,7 +306,7 @@ object FormExtractor {
         // Mostly capitals with a misread l/i: "SUSHlLA".
         if (t.length >= 4 && t.first().isUpperCase() && t.all { it.isLetter() } && t.count { it.isUpperCase() } >= t.length - 1 &&
             t.filter { it.isLowerCase() }.all { it == 'l' || it == 'i' }
-        ) return t.uppercase()
+        ) return t.replace('l', 'I').uppercase()
         return null
     }
 
