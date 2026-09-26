@@ -261,7 +261,7 @@ class MainActivity : FragmentActivity() {
                 scans.firstOrNull { it.id == entry.arguments?.getString("id") }?.let { scan ->
                     DetailScreen(
                         vm, scan,
-                        openResize = entry.arguments?.getString("resize") == "1",
+                        open = entry.arguments?.getString("resize").orEmpty(),
                         onBack = { nav.popBackStack() },
                         onText = { nav.navigate("text/${scan.id}") },
                         onFill = { nav.navigate("fill/${scan.id}") },

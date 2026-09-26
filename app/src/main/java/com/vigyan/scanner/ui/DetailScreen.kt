@@ -90,7 +90,8 @@ import androidx.compose.ui.platform.LocalContext
 fun DetailScreen(
     vm: ScanViewModel,
     scan: Scan,
-    openResize: Boolean,
+    /** A dialog to open straight away: "1" resize for portal, "id" ID cards on A4, "compress". */
+    open: String,
     onBack: () -> Unit,
     onText: () -> Unit,
     onFill: () -> Unit,
@@ -101,7 +102,16 @@ fun DetailScreen(
     val brandingVersion by vm.brandingVersion.collectAsStateWithLifecycle()
     val settings by vm.settings.collectAsStateWithLifecycle()
     // rename, delete, folder, deletePage, resize, filter, split, addPages, view, person
-    var dialog by rememberSaveable { mutableStateOf(if (openResize) "resize" else "") }
+    var dialog by rememberSaveable {
+        mutableStateOf(
+            when (open) {
+                "1" -> "resize"
+                "id" -> "idsheet"
+                "compress" -> "compress"
+                else -> ""
+            },
+        )
+    }
     var pageIndex by rememberSaveable { mutableStateOf(0) } // page for the filter / viewer dialogs
     var fileName by rememberSaveable(scan.id, scan.name, scan.person, scan.ref) { mutableStateOf(vm.suggestFileName(scan)) }
     var pageNumbers by rememberSaveable { mutableStateOf(false) }
@@ -245,9 +255,13 @@ fun DetailScreen(
                 ) { Text("Cut out signature", maxLines = 1) }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilledTonalButton(onClick = { dialog = "split" }, enabled = scan.pages.size > 1, modifier = Modifier.fillMaxWidth()) {
-                    Text("Split / extract pages", maxLines = 1)
+                FilledTonalButton(onClick = { dialog = "split" }, enabled = scan.pages.size > 1, modifier = Modifier.weight(1f)) {
+                    Text("✂ Split pages", maxLines = 1)
                 }
+                FilledTonalButton(onClick = { dialog = "idsheet" }, modifier = Modifier.weight(1f)) { Text("🪪 ID cards on A4", maxLines = 1) }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilledTonalButton(onClick = { dialog = "compress" }, modifier = Modifier.fillMaxWidth()) { Text("🗜 Compress: smaller PDF", maxLines = 1) }
             }
 
             Card(Modifier.fillMaxWidth()) {
@@ -399,6 +413,8 @@ fun DetailScreen(
             dismissButton = { TextButton(onClick = { dialog = "" }) { Text("Cancel") } },
         )
         "resize" -> ResizeDialog(vm, scan, onDismiss = { dialog = "" })
+        "idsheet" -> IdSheetDialog(vm, scan, onDismiss = { dialog = "" })
+        "compress" -> CompressDialog(vm, scan, onDismiss = { dialog = "" })
         "view" -> scan.pages.getOrNull(pageIndex)?.let { page ->
             PageViewer(page, "Page ${pageIndex + 1} of ${scan.pages.size}", onDismiss = { dialog = "" })
         }
@@ -720,5 +736,133 @@ private fun NumberField(label: String, value: String, modifier: Modifier, onChan
         singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
         modifier = modifier,
+    )
+}
+
+/** ID cards (Aadhaar, PAN, voter ID…) at real size on A4, landscape or portrait. */
+@Composable
+private fun IdSheetDialog(vm: ScanViewModel, scan: Scan, onDismiss: () -> Unit) {
+    var landscape by rememberSaveable { mutableStateOf(true) }
+    var large by rememberSaveable { mutableStateOf(false) }
+    var pairs by rememberSaveable { mutableStateOf(true) }
+    val scale = if (large) 1.5f else 1f
+    val perSheet = vm.idSheetCapacity(landscape, scale, pairs)
+    val sheets = if (perSheet > 0) (scan.pages.size + perSheet - 1) / perSheet else 0
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("ID cards on A4") },
+        text = {
+            Column(Modifier.heightIn(max = 540.dp).verticalScroll(rememberScrollState())) {
+                Text(
+                    "Each page of this scan is one side of a card, in page order. Scan the front, then the back, of each card " +
+                        "(use ◀ ▶ to fix the order and ⟳ to turn a card).",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text("Paper", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    FilterChip(selected = landscape, onClick = { landscape = true }, label = { Text("A4 landscape (sideways)") })
+                    FilterChip(selected = !landscape, onClick = { landscape = false }, label = { Text("A4 portrait") })
+                }
+                Text("Card size", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    FilterChip(selected = !large, onClick = { large = false }, label = { Text("Real size (like a photocopy)") })
+                    FilterChip(selected = large, onClick = { large = true }, label = { Text("Bigger (1.5×)") })
+                }
+                CheckRow("Front and back side by side (2 per row)", pairs) { pairs = it }
+                Text(
+                    "$perSheet card side(s) per sheet · ${scan.pages.size} page(s) → $sheets A4 sheet(s)",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(vertical = 6.dp),
+                )
+                IdSheetPreview(landscape, scale, pairs)
+                Text("Print at 100% (actual size) for real-size cards.", style = MaterialTheme.typography.bodySmall)
+                Column(Modifier.padding(top = 8.dp)) {
+                    SendButtons(onDenied = { vm.say("Storage permission is needed to save to the phone") }) { target ->
+                        vm.exportIdSheet(scan, landscape, scale, pairs, target)
+                        onDismiss()
+                    }
+                    OutlinedButton(
+                        onClick = { vm.exportIdSheet(scan, landscape, scale, pairs, ScanViewModel.Target.PRINT); onDismiss() },
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                    ) { Text("🖨 Print") }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+    )
+}
+
+/** The sheet drawn to scale, with a box where each card goes. */
+@Composable
+private fun IdSheetPreview(landscape: Boolean, scale: Float, pairs: Boolean) {
+    val layout = Exporter.idLayout(landscape, scale, pairs)
+    val pw = if (landscape) 297f else 210f
+    val ph = if (landscape) 210f else 297f
+    Box(Modifier.fillMaxWidth().padding(vertical = 6.dp), contentAlignment = Alignment.Center) {
+        androidx.compose.foundation.Canvas(
+            Modifier.width((170f * pw / 297f).dp).height((170f * ph / 297f).dp)
+                .border(1.dp, Color.Gray).background(Color.White),
+        ) {
+            val k = size.width / pw
+            layout.positions.forEach { (x, y) ->
+                drawRect(Color(0xFF90CAF9), Offset(x * k, y * k), androidx.compose.ui.geometry.Size(layout.photoW * k, layout.photoH * k))
+            }
+        }
+    }
+}
+
+/** A smaller copy of the scan as a PDF under a size limit. */
+@Composable
+private fun CompressDialog(vm: ScanViewModel, scan: Scan, onDismiss: () -> Unit) {
+    val original = vm.originalSize(scan.id)
+    var kb by rememberSaveable { mutableStateOf("200") }
+    var gray by rememberSaveable { mutableStateOf(false) }
+    var report by rememberSaveable { mutableStateOf("") }
+    val spec = PortalSpec("Compressed", pdf = true, maxKb = kb.toIntOrNull() ?: 0, gray = gray, suffix = "compressed")
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Compress: smaller PDF") },
+        text = {
+            Column(Modifier.heightIn(max = 540.dp).verticalScroll(rememberScrollState())) {
+                Text(
+                    (original?.let { "The PDF you opened is ${(it + 1023) / 1024} KB. " } ?: "") + "${scan.pages.size} page(s).",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Text("Make it under", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                    listOf(100, 200, 300, 500, 1024, 2048).forEach { v ->
+                        FilterChip(
+                            selected = kb == v.toString(),
+                            onClick = { kb = v.toString(); report = "" },
+                            label = { Text(if (v >= 1024) "${v / 1024} MB" else "$v KB") },
+                        )
+                    }
+                }
+                NumberField("Or type KB", kb, Modifier.fillMaxWidth()) { kb = it; report = "" }
+                CheckRow("Black & white (much smaller, fine for documents)", gray) { gray = it; report = "" }
+                OutlinedButton(
+                    onClick = { vm.portalCheck(scan, spec, 0) { r -> report = r } },
+                    enabled = spec.maxKb > 0,
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                ) { Text("Check the result first") }
+                if (report.isNotEmpty()) {
+                    Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                        Text(report, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(10.dp))
+                    }
+                }
+                Column(Modifier.padding(top = 8.dp)) {
+                    SendButtons(enabled = spec.maxKb > 0, onDenied = { vm.say("Storage permission is needed to save to the phone") }) { target ->
+                        vm.portalExport(scan, spec, 0, target)
+                        onDismiss()
+                    }
+                }
+                Text(
+                    "The pages become pictures, so text in the smaller PDF can't be selected. The original file is not changed.",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
     )
 }

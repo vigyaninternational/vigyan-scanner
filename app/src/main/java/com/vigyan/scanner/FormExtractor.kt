@@ -56,7 +56,7 @@ object FormExtractor {
         "email" to """e\s*-?\s*mail(?:\s*id|\s*address)?""",
         "aadhaar" to """aadha+r$OPT_NO|uid$OPT_NO""",
         "roll" to """roll$OPT_NO""",
-        "admission" to """admission$OPT_NO|reg(?:istration|d)?\.?\s*(?:no|number)\b\.?|enrol+ment$OPT_NO""",
+        "admission" to """admission$OPT_NO|reg(?:istration|d|n)?\.?\s*(?:no|number)\b\.?|enrol+ment$OPT_NO""",
         "address" to """(?:permanent|present|residential|correspondence|postal)?\s*address""",
         "pin" to """pin\s*code|pin\b|postal\s*code""",
     ).map { (k, p) -> k to Regex("""(?<![a-z])(?:$p)(?![a-z])""", RegexOption.IGNORE_CASE) }
@@ -87,7 +87,11 @@ object FormExtractor {
                 val stop = if (h + 1 < hits.size) hits[h + 1].start else line.length
                 var value = line.substring(hit.end, stop).replace(LEAD, "").trim()
                 // "Name :" on one line and the value on the next.
-                if (value.isEmpty() && i + 1 < lines.size && hitsPerLine[i + 1].isEmpty()) value = lines[i + 1]
+                if (value.isEmpty() && i + 1 < lines.size && hitsPerLine[i + 1].isEmpty()) {
+                    // A row of labels over a row of values ("ROLL NO.   REGN. NO." then "328HA026   HA28S21026"): match by column.
+                    val cells = lines[i + 1].split(GAP).filter { it.isNotBlank() }
+                    value = if (hits.size > 1 && cells.size >= hits.size) cells[h] else lines[i + 1]
+                }
                 if (hit.field == "address") {
                     // An address usually runs over the next line or two.
                     var j = i + 1
@@ -256,13 +260,14 @@ object FormExtractor {
     }
 
     private val CERTIFIED = Regex("""c[a-z]{2,9}\s+t?h[a-z]{1,3}(?![a-z])\s*[:\-]?\s*""", RegexOption.IGNORE_CASE)
+    private val CERT_PREFIX = Regex("""(?:.{0,4}|\s*(?:this\s+is\s+to|it\s+is|we\s+hereby)\s*)""", RegexOption.IGNORE_CASE)
 
     /** "(Mother)", "(Father)" beside a parent's name, allowing for a misread letter. */
     private val ROLE_WORD = Regex("""(?<![a-z])(m[oa]th[ae]r|f[ae]th[ae]r|guardian)(?![a-z])""", RegexOption.IGNORE_CASE)
 
     private val NOT_NAME_WORDS = setOf(
         "MOTHER", "FATHER", "GUARDIAN", "CERTIFIED", "THAT", "SON", "DAUGHTER", "WARD", "OF", "AND", "BORN", "ON",
-        "FROM", "REGULAR", "PRIVATE", "EXAMINATION", "CERTIFICATE", "SCHOOL", "HIGH", "BOARD", "MR", "MRS", "MS", "SHRI", "SMT",
+        "FROM", "REGULAR", "PRIVATE", "EXAMINATION", "CERTIFICATE", "SCHOOL", "HIGH", "BOARD", "MR", "MRS", "MS", "SHRI", "SMT", "SRI", "SREE", "SRIMATI", "SHRIMATI", "HAS", "PASSED", "THE", "IN", "DIVISION", "STREAM",
     )
 
     /**
@@ -352,7 +357,14 @@ object FormExtractor {
         }
     }
     private val CHILD_OF = Regex("""(?<![a-z])(?:son|daughter|ward)(?:\s*/\s*(?:son|daughter|ward))*\s+of(?![a-z])\s*[:\-]?\s*""", RegexOption.IGNORE_CASE)
-    private val AND_LEAD = Regex("""^and(?![a-z])\s*""", RegexOption.IGNORE_CASE)
+    private val AND_LEAD = Regex("""^(?:and(?![a-z])|&)\s*""", RegexOption.IGNORE_CASE)
+
+    /** Smt. before a name means the mother, Sri / Shri the father (CHSE certificates). */
+    private val MOTHER_TITLE = Regex("""(?<![a-z])(?:smt|srimati|shrimati|mrs)\.?(?![a-z])""", RegexOption.IGNORE_CASE)
+    private val FATHER_TITLE = Regex("""(?<![a-z])(?:sri|shri|sree|mr)\.?(?![a-z])""", RegexOption.IGNORE_CASE)
+    private val OF_LEAD = Regex("""^of(?![a-z])\s*[:\-]?\s*""", RegexOption.IGNORE_CASE)
+    private val PLACED_IN = Regex("""placed\s+in\s+(?:the\s+)?(first|second|third|1st|2nd|3rd)""", RegexOption.IGNORE_CASE)
+    private val STREAM = Regex("""(?<![a-z])(science|arts|commerce|vocational)\s*(?:\(|stream)""", RegexOption.IGNORE_CASE)
     private val ROLE = Regex("""\(?\s*(?<![a-z])(mother|father|guardian)(?![a-z])\s*\)?""", RegexOption.IGNORE_CASE)
     private val FROM_LEAD = Regex("""^from(?![a-z])\s*[:\-]?\s*""", RegexOption.IGNORE_CASE)
     private val EXAM = Regex(
@@ -368,7 +380,8 @@ object FormExtractor {
     private fun certificate(lines: List<String>, out: MutableMap<String, String>) {
         if ("name" !in out) {
             for ((i, l) in lines.withIndex()) {
-                val m = CERTIFIED.find(l)?.takeIf { it.range.first <= 4 } ?: continue
+                // "Certified that…", "I certify that…", "THIS IS TO CERTIFY THAT…"
+                val m = CERTIFIED.findAll(l).firstOrNull { c -> CERT_PREFIX.matches(l.substring(0, c.range.first)) } ?: continue
                 val v = l.substring(m.range.last + 1).ifBlank { lines.getOrNull(i + 1).orEmpty() }
                 val found = capsName(v) ?: if (l.contains("certif", ignoreCase = true)) cleanName(v) else null
                 found?.let { out["name"] = it } ?: continue
@@ -394,9 +407,42 @@ object FormExtractor {
                 break
             }
         }
+        if ("school" !in out) {
+            // CHSE: "of   VIGYAN INTERNATIONAL H S SCHOOL, KORAPUT" just below the parents.
+            for ((i, l) in lines.withIndex()) {
+                val m = OF_LEAD.find(l) ?: continue
+                val before = (maxOf(0, i - 3) until i).joinToString(" ") { lines[it] }
+                if (!(MOTHER_TITLE.containsMatchIn(before) || FATHER_TITLE.containsMatchIn(before) || CHILD_OF.containsMatchIn(before) ||
+                        ROLE_WORD.containsMatchIn(before))
+                ) continue
+                val v = l.substring(m.range.last + 1)
+                if (capsName(v) == null) continue
+                cleanSchool(v)?.let { out["school"] = it }
+                break
+            }
+        }
+
+        // "…and is placed in the THIRD Division" (CHSE); the board's word wins over other guesses.
+        lines.firstNotNullOfOrNull { PLACED_IN.find(it.replace(GAP, " ")) }?.let { m ->
+            val d = when (m.groupValues[1].lowercase()) {
+                "1st" -> "FIRST"
+                "2nd" -> "SECOND"
+                "3rd" -> "THIRD"
+                else -> m.groupValues[1].uppercase()
+            }
+            out["grade"] = "$d DIVISION"
+        }
+        // "in SCIENCE Stream", "SCIENCE(REGULAR)"
+        out["exam"]?.let { exam ->
+            lines.firstNotNullOfOrNull { STREAM.find(it) }?.let { s ->
+                val stream = titleCase(s.groupValues[1])
+                if (!exam.contains(stream, ignoreCase = true)) out["exam"] = "$exam, $stream"
+            }
+        }
 
         val c = lines.indexOfFirst { CHILD_OF.containsMatchIn(it) }
         if (c < 0) {
+            parentsByTitle(lines, out)
             parentsByRole(lines, out)
             return
         }
@@ -412,6 +458,12 @@ object FormExtractor {
                 val namePart = if (role != null) piece.substring(0, role.range.first) else piece
                 var r = role?.groupValues?.get(1)?.lowercase()
                 if (r == null && next != null) r = ROLE.matchEntire(next.trim())?.groupValues?.get(1)?.lowercase()
+                // "Smt. SARMISTA …" is the mother, "Sri SARAS …" the father.
+                if (r == null) r = when {
+                    MOTHER_TITLE.containsMatchIn(piece) -> "mother"
+                    FATHER_TITLE.containsMatchIn(piece) -> "father"
+                    else -> null
+                }
                 if (namePart.isNotBlank()) parts += namePart to r
             }
         }
@@ -433,7 +485,29 @@ object FormExtractor {
             }
         }
         unknown.forEach { n -> if ("father" !in out) out["father"] = n else if ("mother" !in out) out["mother"] = n }
+        parentsByTitle(lines, out)
         parentsByRole(lines, out)
+    }
+
+    /**
+     * Parents marked by a title when "Son/Daughter of" can't be read: "… Smt.   SARMISTA ANUPAMA
+     * KHOSLA" (mother) and "& Sri.   SARAS KUMAR KHORA" (father).
+     */
+    private fun parentsByTitle(lines: List<String>, out: MutableMap<String, String>) {
+        // Only on certificates: elsewhere "Sri" / "Mr." can belong to anyone.
+        if (lines.none { it.contains("certif", ignoreCase = true) || CHILD_OF.containsMatchIn(it) }) return
+        for (l in lines) {
+            val mother = MOTHER_TITLE.findAll(l).lastOrNull()
+            val father = FATHER_TITLE.findAll(l).lastOrNull()
+            val (key, title) = when {
+                mother != null && (father == null || mother.range.first > father.range.first) -> "mother" to mother
+                father != null -> "father" to father
+                else -> continue
+            }
+            if (key in out && out.getValue(key).trim().contains(' ')) continue
+            val name = capsName(l.substring(title.range.last + 1))?.takeIf { it != out["name"] } ?: continue
+            out[key] = name
+        }
     }
 
     private fun titleCase(s: String) = s.lowercase().split(Regex("""\s+""")).joinToString(" ") { it.replaceFirstChar(Char::uppercase) }

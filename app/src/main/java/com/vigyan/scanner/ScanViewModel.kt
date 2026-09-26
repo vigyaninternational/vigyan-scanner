@@ -137,8 +137,8 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- New scans ----
 
-    fun saveNewScan(pages: List<Uri>, sort: Boolean = false, then: (Scan) -> Unit) = work("Saving scan…") {
-        val scan = io { repo.create(pages, folder = folderForNew) }
+    fun saveNewScan(pages: List<Uri>, sort: Boolean = false, name: String? = null, then: (Scan) -> Unit) = work("Saving scan…") {
+        val scan = io { repo.create(pages, name = name?.let { uniqueName(it) }, folder = folderForNew) }
         reload() // the new scan must be in the list before its screen opens
         then(scan)
         if (sort) autoSortInBackground(scan)
@@ -159,6 +159,42 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
         then(scan)
         if (sort) autoSortInBackground(scan)
     }
+
+    // ---- Compress a PDF ----
+
+    /** Size of the PDF each "compress" scan came from (scan id → bytes), to compare with the result. */
+    private val originalSizes = mutableMapOf<String, Long>()
+
+    fun originalSize(scanId: String): Long? = originalSizes[scanId]
+
+    /** Opens a PDF (from WhatsApp, Files…) to make a smaller copy of it. */
+    fun openForCompress(uri: Uri, then: (Scan) -> Unit) = work("Opening the PDF…") {
+        var name = "PDF"
+        var size = -1L
+        io {
+            ctx.contentResolver.query(uri, null, null, null, null)?.use { c ->
+                if (c.moveToFirst()) {
+                    c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME).takeIf { it >= 0 }?.let { name = c.getString(it) ?: name }
+                    c.getColumnIndex(android.provider.OpenableColumns.SIZE).takeIf { it >= 0 }?.let { size = c.getLong(it) }
+                }
+            }
+        }
+        val files = importFiles(listOf(uri))
+        val base = name.substringBeforeLast('.').ifBlank { "PDF" }
+        val scan = io { repo.createFromFiles(files, uniqueName("$base (compressed)"), folderForNew) }
+        if (size > 0) originalSizes[scan.id] = size
+        reload()
+        then(scan)
+    }
+
+    // ---- ID cards on A4 ----
+
+    /** Every page of [scan] at real ID-card size (or [scale] times it) on A4 sheets. */
+    fun exportIdSheet(scan: Scan, landscape: Boolean, scale: Float, pairs: Boolean, target: Target) = send(target, "Making the A4 sheet…") {
+        listOf(io { Exporter.idSheet(ctx, scan, landscape, scale, pairs, suggestFileName(scan)) })
+    }
+
+    fun idSheetCapacity(landscape: Boolean, scale: Float, pairs: Boolean) = Exporter.idLayout(landscape, scale, pairs).count
 
     // ---- Scan & merge by name ----
 

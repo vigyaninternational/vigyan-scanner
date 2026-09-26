@@ -27,7 +27,7 @@ object MarksheetExtractor {
     )
     private val SUBJECT_ROW = Regex("""^(?:\d{1,2}[.)]?\s+)?([A-Za-z][A-Za-z .&()'/,\-]{1,48}?)\s*[:\-]?\s+((?:\d{1,3}\s*){1,6})(?:\s+.*)?$""")
     private val TOTAL_ROW = Regex("""\b(?:grand\s+total|total\s+marks|aggregate|total)\b""", RegexOption.IGNORE_CASE)
-    private val FULL_MARKS = setOf(100, 50, 200, 150, 80, 75, 70, 60, 40, 30, 25, 20)
+    private val FULL_MARKS = setOf(100, 50, 200, 150, 90, 80, 75, 70, 65, 60, 55, 45, 40, 35, 30, 25, 20, 15, 10)
     private val CODE_CELL = Regex("""^[A-Z]{2,4}\d{0,3}$""")
     private val GAP = Regex("""\s{3,}""")
 
@@ -56,9 +56,17 @@ object MarksheetExtractor {
             if (label.count(Char::isLetter) < 3 || SKIP.containsMatchIn(label)) continue
             val nums = m.groupValues[2].trim().split(Regex("""\s+""")).mapNotNull { it.toIntOrNull() }
             if (nums.isEmpty() || nums.any { it > 200 }) continue
-            val max = nums.filter { it in FULL_MARKS }.maxOrNull()?.takeIf { nums.size > 1 } ?: 100
-            val rest = nums.toMutableList().apply { if (nums.size > 1) remove(max) }
-            val obtained = rest.lastOrNull() ?: continue
+            // "BOTANY   35   10": two numbers are full marks, then marks secured.
+            val max: Int
+            val obtained: Int
+            if (nums.size == 2 && nums[0] >= nums[1] && nums[0] >= 10) {
+                max = nums[0]
+                obtained = nums[1]
+            } else {
+                max = nums.filter { it in FULL_MARKS }.maxOrNull()?.takeIf { nums.size > 1 } ?: 100
+                val rest = nums.toMutableList().apply { if (nums.size > 1) remove(max) }
+                obtained = rest.lastOrNull() ?: continue
+            }
             if (obtained > max) continue
             subjects += SubjectMark(tidy(label), max, obtained)
         }

@@ -447,3 +447,101 @@ class MotherFirstNameTest {
         assertEquals("SUSHILA PARAJA", FormExtractor.capsName("SUSHlLA PARAJA"))
     }
 }
+
+class ChseTest {
+    private val certificate = """
+        Serial No.   058238   CERT.SNO.   20231058238
+        COUNCIL OF HIGHER SECONDARY EDUCATION, ODISHA
+        ROLL NO.   328HA026   BHUBANESWAR
+        REGN. NO.   HA28S21026
+        HIGHER SECONDARY EXAMINATION CERTIFICATE
+        I Certify that   K SALEM WINSENT NAYAK
+        Son/Daughter of Smt.   SARMISTA ANUPAMA KHOSLA
+        & Sri.   SARAS KUMAR KHORA
+        of   VIGYAN INTERNATIONAL H S SCHOOL, KORAPUT
+        has passed the Annual Higher Secondary Examination   2023   in SCIENCE   Stream
+        held in the month of   MARCH   and is placed in the   THIRD   Division.
+        SUBJECTS OF EXAMINATION
+        COMPULSORY   :   ENGLISH
+        ALT. ENGLISH
+        ELECTIVES   :   PHYSICS
+        ENVIRONMENTAL EDUCATION   :   B
+        DATE   31-MAY-2023
+    """.trimIndent()
+
+    private val marksheet = """
+        Serial No.   058238   23058238
+        COUNCIL OF HIGHER SECONDARY EDUCATION, ODISHA
+        MEMORANDUM OF MARKS
+        HIGHER SECONDARY EXAMINATION
+        THIS IS TO CERTIFY THAT   K SALEM WINSENT NAYAK
+        SON / DAUGHTER OF SMT.   SARMISTA ANUPAMA KHOSLA
+        & SRI.   SARAS KUMAR KHORA
+        OF   VIGYAN INTERNATIONAL H S SCHOOL, KORAPUT   HAS PASSED
+        THE   ANNUAL H.S. EXAMINATION 2023   AND IS PLACED IN   THIRD   DIVISION
+        ROLL NO.   REGN. NO.   STREAM
+        328HA026   HA28S21026   SCIENCE(REGULAR)
+        SUBJECTS   MAX. MARKS   MARKS OBTAINED
+        ENGLISH   100   43   ZERO   FOUR   THREE
+        ALT. ENGLISH   100   43   ZERO   FOUR   THREE
+        PHYSICS   70   21   ZERO   TWO   ONE
+        PHYSICS (PRACTICAL)   30   26   ZERO   TWO   SIX
+        CHEMISTRY   70   21   ZERO   TWO   ONE
+        CHEMISTRY (PRACTICAL)   30   27   ZERO   TWO   SEVEN
+        BIOLOGY
+        BOTANY   35   10   ZERO   ONE   ZERO
+        BOTANY (PRACTICAL)   15   13   ZERO   ONE   THREE
+        ZOOLOGY   35   12   ZERO   ONE   TWO
+        ZOOLOGY (PRACTICAL)   15   11   ZERO   ONE   ONE
+        INFORMATION TECHNOLOGY   70   33   ZERO   THREE   THREE
+        INFORMATION TECHNOLOGY (PRACTICAL)   30   27   ZERO   TWO   SEVEN
+        ENVIRONMENTAL EDUCATION   :   B
+        GRAND TOTAL   IN FIGURES   287
+        IN WORDS   TWO   EIGHT   SEVEN
+        PASS MARKS   DIVISION
+        Theory   30%   First   60%
+        DATE OF PUBLICATION :   31-MAY-2023
+    """.trimIndent()
+
+    @Test
+    fun certificate() {
+        val f = FormExtractor.extract(certificate)
+        assertEquals("K SALEM WINSENT NAYAK", f["name"])
+        assertEquals("SARMISTA ANUPAMA KHOSLA", f["mother"])
+        assertEquals("SARAS KUMAR KHORA", f["father"])
+        assertEquals("328HA026", f["roll"])
+        assertEquals("HA28S21026", f["admission"])
+        assertEquals("VIGYAN INTERNATIONAL H S SCHOOL, KORAPUT", f["school"])
+        assertEquals("Higher Secondary Examination 2023, Science", f["exam"])
+        assertEquals("THIRD DIVISION", f["grade"])
+    }
+
+    @Test
+    fun marksheet() {
+        val f = FormExtractor.extract(marksheet)
+        assertEquals("K SALEM WINSENT NAYAK", f["name"])
+        assertEquals("SARMISTA ANUPAMA KHOSLA", f["mother"])
+        assertEquals("SARAS KUMAR KHORA", f["father"])
+        assertEquals("328HA026", f["roll"])
+        assertEquals("HA28S21026", f["admission"])
+        assertEquals("VIGYAN INTERNATIONAL H S SCHOOL, KORAPUT", f["school"])
+        assertEquals("THIRD DIVISION", f["grade"])
+        val marks = f.getValue("marks").lines()
+        assertEquals(12, marks.size)
+        assertEquals("English: 43/100", marks[0])
+        assertEquals("Botany: 10/35", marks[6])
+        assertEquals("Information Technology (Practical): 27/30", marks[11])
+        assertEquals("287 / 600", f["total"])
+        assertEquals("47.83", f["percent"])
+    }
+}
+
+class IdSheetLayoutTest {
+    @Test
+    fun cardsPerSheet() {
+        assertEquals(6, Exporter.idLayout(landscape = true, scale = 1f, pairs = true).count) // 3 cards, front + back
+        assertEquals(9, Exporter.idLayout(landscape = true, scale = 1f, pairs = false).count)
+        assertEquals(4, Exporter.idLayout(landscape = true, scale = 1.5f, pairs = true).count)
+        assertEquals(8, Exporter.idLayout(landscape = false, scale = 1f, pairs = true).count)
+    }
+}

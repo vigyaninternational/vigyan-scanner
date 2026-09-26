@@ -313,6 +313,47 @@ object Exporter {
         return PortalResult(file, note, kb, outW, outH, result.quality, result.scale, result.fits && result.bytes.size >= minBytes)
     }
 
+    /**
+     * Where ID cards go on an A4 sheet (mm): real size is 85.6 × 54 mm, times [scale]. With
+     * [pairs], two per row, so a card's front and back sit side by side.
+     */
+    fun idLayout(landscape: Boolean, scale: Float, pairs: Boolean): PhotoSheet.Layout {
+        val pw = if (landscape) PhotoSheet.A4_H else PhotoSheet.A4_W
+        val ph = if (landscape) PhotoSheet.A4_W else PhotoSheet.A4_H
+        return PhotoSheet.layout(pw, ph, 85.6f * scale, 54f * scale, 10f, 8f, maxCols = if (pairs) 2 else 0)
+    }
+
+    /** Scanned ID cards (Aadhaar, PAN, voter ID…) at their real size on A4, ready to print or attach. */
+    fun idSheet(context: Context, scan: Scan, landscape: Boolean, scale: Float, pairs: Boolean, name: String): File {
+        val layout = idLayout(landscape, scale, pairs)
+        if (layout.count == 0) error("The cards don't fit on A4 at this size")
+        val k = 72f / 25.4f // points per mm
+        val pageW = (if (landscape) PhotoSheet.A4_H else PhotoSheet.A4_W) * k
+        val pageH = (if (landscape) PhotoSheet.A4_W else PhotoSheet.A4_H) * k
+        val pages = scan.pages.chunked(layout.count).map { chunk ->
+            val placements = chunk.mapIndexed { j, file ->
+                val (x, y) = layout.positions[j]
+                val bmp = Images.decode(file, 1800)
+                // A thin grey edge to cut along.
+                val framed = bmp.copy(Bitmap.Config.ARGB_8888, true)
+                bmp.recycle()
+                Canvas(framed).drawRect(
+                    0f, 0f, framed.width - 1f, framed.height - 1f,
+                    android.graphics.Paint().apply { color = Color.LTGRAY; style = android.graphics.Paint.Style.STROKE; strokeWidth = maxOf(2f, framed.width / 400f) },
+                )
+                val image = Images.encode(framed, 88)
+                framed.recycle()
+                // Fitted into its place, keeping the card's shape.
+                val s = minOf(layout.photoW / image.pixelWidth, layout.photoH / image.pixelHeight)
+                val w = image.pixelWidth * s
+                val h = image.pixelHeight * s
+                PdfWriter.Placement(image, (x + (layout.photoW - w) / 2) * k, (y + (layout.photoH - h) / 2) * k, w * k, h * k)
+            }
+            PdfWriter.Page(pageW, pageH, placements)
+        }
+        return File(exportDir(context), "${safeName(name)} ID cards A4.pdf").apply { outputStream().use { PdfWriter().write(pages, it) } }
+    }
+
     /** A portal file and how it came out. [width]/[height] are 0 for a PDF. */
     class PortalResult(
         val file: File,

@@ -159,6 +159,13 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit, onNavigate: 
     }
     // Signature cut-out: scan the signature with the document scanner.
     val signatureScanner = rememberScanner(onError = vm::say) { uris -> vm.cutoutFromUris(uris) { onNavigate("cutout") } }
+    // ID cards on A4: scan the cards (front, back, next card…), then lay them out.
+    val idScanner = rememberScanner(onError = vm::say) { pages ->
+        vm.saveNewScan(pages, name = "ID cards " + SimpleDateFormat("dd-MM-yyyy", Locale.US).format(Date())) { onNavigate("scan/${it.id}?resize=id") }
+    }
+    val compressPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) vm.openForCompress(uri) { onNavigate("scan/${it.id}?resize=compress") }
+    }
 
     fun scan(m: ScanMode) {
         mode = m
@@ -423,6 +430,14 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit, onNavigate: 
                         }
                         ActionCard("Open photo / PDF", "From WhatsApp, gallery, files", "📂", CardAmber, Modifier.weight(1f)) {
                             importPicker.launch(arrayOf("image/*", "application/pdf"))
+                        }
+                    }
+                }
+                item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        ActionCard("ID cards on A4", "Aadhaar, PAN… real size, sideways A4", "🪪", CardTeal, Modifier.weight(1f)) { idScanner(20) }
+                        ActionCard("Compress PDF", "Make a PDF smaller (KB / MB)", "🗜", CardIndigo, Modifier.weight(1f)) {
+                            compressPicker.launch(arrayOf("application/pdf"))
                         }
                     }
                 }
