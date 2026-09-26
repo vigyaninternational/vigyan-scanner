@@ -1,8 +1,11 @@
 package com.vigyan.scanner
 
+import org.json.JSONArray
+import org.json.JSONObject
+
 /**
- * A portal upload rule: a JPG of a fixed pixel size (0 = keep the shape) or a PDF, between
- * [minKb] and [maxKb]. The presets are common limits; always check the portal's own
+ * A portal upload rule: a JPG (or PNG) of a fixed pixel size (0 = keep the shape) or a PDF,
+ * between [minKb] and [maxKb]. The presets are common limits; always check the portal's own
  * instructions and use Custom when they differ.
  */
 data class PortalSpec(
@@ -14,6 +17,8 @@ data class PortalSpec(
     val maxKb: Int,
     val gray: Boolean = false,
     val suffix: String = "photo",
+    /** PNG instead of JPG (lossless: only the pixel size can bring it under the limit). */
+    val png: Boolean = false,
 ) {
     companion object {
         val PRESETS = listOf(
@@ -29,5 +34,35 @@ data class PortalSpec(
             PortalSpec("Document PDF · under 1 MB", pdf = true, maxKb = 1024),
             PortalSpec("Document PDF · under 2 MB", pdf = true, maxKb = 2048),
         )
+
+        fun toJson(list: List<PortalSpec>): String = JSONArray(
+            list.map { s ->
+                JSONObject().put("label", s.label).put("pdf", s.pdf).put("width", s.width).put("height", s.height)
+                    .put("minKb", s.minKb).put("maxKb", s.maxKb).put("gray", s.gray).put("suffix", s.suffix).put("png", s.png)
+            },
+        ).toString()
+
+        fun fromJson(json: String?): List<PortalSpec> {
+            if (json.isNullOrBlank()) return emptyList()
+            return try {
+                val a = JSONArray(json)
+                (0 until a.length()).map { i ->
+                    val o = a.getJSONObject(i)
+                    PortalSpec(
+                        label = o.getString("label"),
+                        pdf = o.optBoolean("pdf"),
+                        width = o.optInt("width"),
+                        height = o.optInt("height"),
+                        minKb = o.optInt("minKb"),
+                        maxKb = o.optInt("maxKb", 100),
+                        gray = o.optBoolean("gray"),
+                        suffix = o.optString("suffix", "file"),
+                        png = o.optBoolean("png"),
+                    )
+                }
+            } catch (e: Exception) {
+                emptyList()
+            }
+        }
     }
 }

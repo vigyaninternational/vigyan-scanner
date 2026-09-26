@@ -23,6 +23,7 @@ import java.util.Locale
 enum class Format(val label: String, val ext: String, val mime: String) {
     PDF("PDF", "pdf", "application/pdf"),
     JPG("JPG images", "jpg", "image/jpeg"),
+    PNG("PNG images", "png", "image/png"),
     TXT("Text (OCR)", "txt", "text/plain"),
 }
 
@@ -104,6 +105,20 @@ object Exporter {
                     else -> dest.writeBytes(Images.jpeg(page, options.quality).jpeg)
                 }
                 out += dest
+            }
+        }
+        if (Format.PNG in options.formats) {
+            scan.pages.forEachIndexed { i, page ->
+                val name = if (scan.pages.size == 1) "$base.png" else "${base}_page${i + 1}.png"
+                val bmp = Images.decode(page, options.quality.maxSide)
+                val img = if (options.decorated) {
+                    val stamped = branding.stamp(bmp, options.attested, options.seal, options.signature)
+                    if (stamped !== bmp) bmp.recycle()
+                    stamped
+                } else bmp
+                File(dir, name).outputStream().use { img.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                img.recycle()
+                out += File(dir, name)
             }
         }
         if (Format.TXT in options.formats && scan.text != null) {
@@ -222,14 +237,39 @@ object Exporter {
      * possible while staying under the portal's size limit. Returns the file and a note when
      * the limit could not be met.
      */
-    fun portalFile(context: Context, scan: Scan, spec: PortalSpec, pageIndex: Int): Pair<File, String?> {
+    fun portalFile(context: Context, scan: Scan, spec: PortalSpec, pageIndex: Int): PortalResult {
         val dir = exportDir(context)
         val base = safeName(scan.name)
         val maxBytes = spec.maxKb * 1024
         val minBytes = spec.minKb * 1024
         val result: SizeFit.Result
         val file: File
-        if (spec.pdf) {
+        var outW = 0
+        var outH = 0
+        if (!spec.pdf && spec.png) {
+            // PNG is lossless: only a smaller picture makes a smaller file.
+            file = File(dir, "${base}_${spec.suffix}.png")
+            val source = Images.decode(scan.pages[pageIndex.coerceIn(scan.pages.indices)], 3000)
+            val fixed = spec.width > 0 && spec.height > 0
+            val sized = if (fixed) Images.cropResize(source, spec.width, spec.height) else source
+            if (sized !== source) source.recycle()
+            val base0 = if (spec.gray) Images.grayscale(sized).also { if (it !== sized) sized.recycle() } else sized
+            fun png(b: Bitmap) = java.io.ByteArrayOutputStream().also { b.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
+            var scale = 1f
+            var bytes = png(base0)
+            outW = base0.width
+            outH = base0.height
+            while (!fixed && bytes.size > maxBytes && scale > 0.1f) {
+                scale *= 0.8f
+                val small = Bitmap.createScaledBitmap(base0, (base0.width * scale).toInt().coerceAtLeast(1), (base0.height * scale).toInt().coerceAtLeast(1), true)
+                bytes = png(small)
+                outW = small.width
+                outH = small.height
+                small.recycle()
+            }
+            base0.recycle()
+            result = SizeFit.Result(bytes, scale, 100, bytes.size <= maxBytes)
+        } else if (spec.pdf) {
             file = File(dir, "$base.pdf")
             result = SizeFit.fit(maxBytes, minBytes) { scale, q ->
                 val maxSide = (2000 * scale).toInt().coerceAtLeast(300)
@@ -259,6 +299,8 @@ object Exporter {
                     Images.encode(small, q).jpeg.also { small.recycle() }
                 }
             }
+            outW = (base0.width * result.scale).toInt().coerceAtLeast(1)
+            outH = (base0.height * result.scale).toInt().coerceAtLeast(1)
             base0.recycle()
         }
         file.writeBytes(result.bytes)
@@ -268,7 +310,42 @@ object Exporter {
             result.bytes.size < minBytes -> "It is $kb KB, under the ${spec.minKb} KB minimum. Try a larger pixel size."
             else -> null
         }
-        return file to note
+        return PortalResult(file, note, kb, outW, outH, result.quality, result.scale, result.fits && result.bytes.size >= minBytes)
+    }
+
+    /** A portal file and how it came out. [width]/[height] are 0 for a PDF. */
+    class PortalResult(
+        val file: File,
+        val note: String?,
+        val kb: Int,
+        val width: Int,
+        val height: Int,
+        val quality: Int,
+        val scale: Float,
+        val ok: Boolean,
+    ) {
+        /** A checklist against the portal's rules, with a warning when it had to be squeezed hard. */
+        fun report(spec: PortalSpec): String = buildString {
+            val format = when {
+                spec.pdf -> "PDF"
+                spec.png -> "PNG"
+                else -> "JPG"
+            }
+            append("$format · $kb KB")
+            if (width > 0) append(" · $width×$height px")
+            append("\n\n")
+            val range = if (spec.minKb > 0) "${spec.minKb}–${spec.maxKb} KB" else "under ${spec.maxKb} KB"
+            append(if (ok) "✅ Size is $range\n" else "❌ Size should be $range\n")
+            if (spec.width > 0 && width > 0) {
+                append(if (width == spec.width && height == spec.height) "✅ Exactly ${spec.width}×${spec.height} px\n" else "❌ Should be ${spec.width}×${spec.height} px\n")
+            }
+            append("✅ $format file\n")
+            if ((!spec.png && quality < 35) || scale < 0.6f) {
+                append("\n⚠ It had to be squeezed a lot (quality $quality%" + (if (scale < 1f) ", ${(scale * 100).toInt()}% size" else "") +
+                    "). Small text may be hard to read: allow more KB if the portal permits, or tick Black & white.")
+            }
+            note?.let { append("\n\n$it") }
+        }
     }
 
     /** Merit list as a printable PDF (overall, then category-wise) and/or a CSV for Excel. */

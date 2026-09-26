@@ -11,10 +11,10 @@ object Cutout {
     class Image(val pixels: IntArray, val width: Int, val height: Int)
 
     /**
-     * [strength] 0..1: higher keeps fainter strokes (and more paper noise). Returns null when no
-     * ink is found.
+     * [strength] 0..1: higher keeps fainter strokes (and more paper noise). [darkness] 0..1 makes
+     * the ink bolder and darker. Returns null when no ink is found.
      */
-    fun cut(src: Image, strength: Float = 0.5f, ink: Ink = Ink.ORIGINAL): Image? {
+    fun cut(src: Image, strength: Float = 0.5f, ink: Ink = Ink.ORIGINAL, darkness: Float = 0f): Image? {
         val n = src.width * src.height
         val lum = IntArray(n) { i ->
             val p = src.pixels[i]
@@ -57,11 +57,20 @@ object Cutout {
 
         val w = maxX - minX + 1
         val h = maxY - minY + 1
+        val d = darkness.coerceIn(0f, 1f)
+        val boost = 1f + 2f * d
+        val dim = 1f - 0.6f * d
         val out = IntArray(w * h) { k ->
             val i = (minY + k / w) * src.width + (minX + k % w)
-            val a = alpha[i]
+            val a = minOf(255, (alpha[i] * boost).toInt())
             val rgb = when (ink) {
-                Ink.ORIGINAL -> src.pixels[i] and 0xFFFFFF
+                Ink.ORIGINAL -> {
+                    val p = src.pixels[i]
+                    val r = (((p shr 16) and 0xFF) * dim).toInt()
+                    val g = (((p shr 8) and 0xFF) * dim).toInt()
+                    val b = ((p and 0xFF) * dim).toInt()
+                    (r shl 16) or (g shl 8) or b
+                }
                 Ink.BLACK -> 0x1A1A1A
                 Ink.BLUE -> 0x0D2A8A
             }

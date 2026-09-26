@@ -174,6 +174,23 @@ object FormExtractor {
         return if (v > nowYY) 1900 + v else 2000 + v
     }
 
+    /**
+     * A blank field on a paper form: a printed label with nothing after it but a colon, dots or a
+     * line ("Name : ________"). Returns the field key, or null when there is no label or the field
+     * is already written in.
+     */
+    fun blankLabel(line: String): String? = blankLabelEnd(line)?.first
+
+    /** Like [blankLabel], plus where the label (and any colon right after it) ends in [line]. */
+    fun blankLabelEnd(line: String): Pair<String, Int>? {
+        val hit = labelHits(line).lastOrNull() ?: return null
+        val rest = line.substring(hit.end).replace(Regex("""[\s:;.,\-_–—=|/\\()\[\]]+"""), "")
+        if (rest.length > 2) return null
+        var end = hit.end
+        while (end < line.length && (line[end] == ' ' || line[end] == ':' || line[end] == '-')) end++
+        return (if (hit.field == "mobile") "mobile1" else hit.field) to end
+    }
+
     private fun labelHits(line: String): List<Hit> {
         val all = LABELS.flatMap { (field, re) -> re.findAll(line).map { Hit(field, it.range.first, it.range.last + 1) } }
             .filter { it.end > it.start }

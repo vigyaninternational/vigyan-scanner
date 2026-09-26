@@ -62,6 +62,44 @@ object Images {
         return scaled
     }
 
+    /** Turned by [degrees] (any angle), with white filling the new corners. Returns [src] for 0. */
+    fun rotateOnWhite(src: Bitmap, degrees: Float): Bitmap {
+        if (degrees % 360f == 0f) return src
+        val m = Matrix().apply { postRotate(degrees) }
+        val r = android.graphics.RectF(0f, 0f, src.width.toFloat(), src.height.toFloat())
+        m.mapRect(r)
+        m.postTranslate(-r.left, -r.top)
+        val out = Bitmap.createBitmap(r.width().roundToInt().coerceAtLeast(1), r.height().roundToInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+        android.graphics.Canvas(out).apply {
+            drawColor(Color.WHITE)
+            drawBitmap(src, m, android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG))
+        }
+        return out
+    }
+
+    /** A see-through picture on white (for JPG, which has no transparency). */
+    fun onWhite(src: Bitmap): Bitmap {
+        val out = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
+        android.graphics.Canvas(out).apply {
+            drawColor(Color.WHITE)
+            drawBitmap(src, 0f, 0f, null)
+        }
+        return out
+    }
+
+    /** [src] fitted (not cropped) and centred in exactly [w]×[h] pixels of white. */
+    fun fitOnWhite(src: Bitmap, w: Int, h: Int): Bitmap {
+        val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val s = minOf(w.toFloat() / src.width, h.toFloat() / src.height)
+        val dw = src.width * s
+        val dh = src.height * s
+        android.graphics.Canvas(out).apply {
+            drawColor(Color.WHITE)
+            drawBitmap(src, null, android.graphics.RectF((w - dw) / 2, (h - dh) / 2, (w + dw) / 2, (h + dh) / 2), android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG))
+        }
+        return out
+    }
+
     fun toCutout(bitmap: Bitmap): Cutout.Image {
         val px = IntArray(bitmap.width * bitmap.height)
         bitmap.getPixels(px, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)

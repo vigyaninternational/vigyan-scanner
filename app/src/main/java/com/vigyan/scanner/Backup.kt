@@ -18,7 +18,7 @@ import java.util.zip.ZipOutputStream
 object Backup {
 
     private const val INFO = "backup-info.json"
-    private val ROOTS = listOf("scans", "checklist.json", "branding")
+    private val ROOTS = listOf("scans", "checklist.json", "branding", "signatures", "form_templates")
 
     class Result(val scansAdded: Int, val scansSkipped: Int, val studentsAdded: Int)
 
@@ -116,11 +116,13 @@ object Backup {
             repo.save(ChecklistRepository.Data((mine.types + theirs.types).distinct(), mine.students + newOnes))
         }
 
-        // Seal and signature: only if this phone has none.
-        val branding = File(files, "branding").apply { mkdirs() }
-        File(temp, "branding").listFiles()?.forEach { f ->
-            val dest = File(branding, f.name)
-            if (!dest.exists()) f.copyTo(dest)
+        // Seal and signature, saved signatures and form templates: only files this phone doesn't have.
+        for (folder in listOf("branding", "signatures", "form_templates")) {
+            val mineDir = File(files, folder).apply { mkdirs() }
+            File(temp, folder).listFiles()?.forEach { f ->
+                val dest = File(mineDir, f.name)
+                if (f.isFile && !dest.exists()) f.copyTo(dest)
+            }
         }
         val prefs = context.getSharedPreferences("branding", Context.MODE_PRIVATE)
         val edit = prefs.edit()

@@ -445,10 +445,80 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
             ctx.contentResolver.openInputStream(uri)?.use { Backup.restore(ctx, it) } ?: error("Could not open the file")
         }
         _checklist.value = checklistRepo.load()
+        _signatureList.value = signatures.list()
         _brandingVersion.value++
         _message.value = "Restored ${result.scansAdded} scan(s)" +
             (if (result.scansSkipped > 0) ", ${result.scansSkipped} already here" else "") +
             (if (result.studentsAdded > 0) ", ${result.studentsAdded} checklist student(s)" else "")
+    }
+
+    // ---- Filling in a paper form ----
+
+    /** Where one detail goes on a scanned form, in the page picture's pixels (of a [pageW]-wide page). */
+    class FillSpot(val key: String, val text: String, val x: Float, val baseline: Float, val height: Float, val pageW: Int)
+
+    /**
+     * Finds the form's blank labelled fields ("Name : ______") on page [index] and pairs them with
+     * [details] (e.g. saved from Smart Fill on the person's Aadhaar or ID card).
+     */
+    fun planAutoFill(scan: Scan, index: Int, details: Map<String, String>, then: (List<FillSpot>) -> Unit) = work("Finding the blank fields…") {
+        if (details.isEmpty()) error("No details to fill in. Open the person's scan (Aadhaar, ID or form), use Smart Fill and save it first.")
+        val page = scan.pages.getOrNull(index) ?: error("Page not found")
+        if (io { repo.pageOcr(page) } == null) ocrMissing(scan)
+        val ocr = io { repo.pageOcr(page) } ?: error("Could not read this page")
+        val used = mutableSetOf<String>()
+        val spots = ocr.lines.mapNotNull { line ->
+            val (key, end) = FormExtractor.blankLabelEnd(line.text) ?: return@mapNotNull null
+            val raw = details[key]?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            if (!used.add(key)) return@mapNotNull null
+            val value = raw.replace('\n', ' ')
+            val h = (line.bottom - line.top).toFloat()
+            val x = line.left + (line.right - line.left) * end.toFloat() / line.text.length.coerceAtLeast(1) + h * 0.3f
+            FillSpot(key, value, x, line.bottom - h * 0.18f, h, ocr.width)
+        }
+        if (spots.isEmpty()) _message.value = "No empty labelled fields found on this page. Use 🔤 Details to place them by hand."
+        else _message.value = "Filled ${spots.size} field(s). Check each one; drag with ✋ Move to adjust."
+        then(spots)
+    }
+
+    /** Scans with saved details (Smart Fill), for filling forms. */
+    fun detailSources(): List<Scan> = _scans.value.filter { it.fields.values.any { v -> v.isNotBlank() } }
+
+    private fun draftFile(page: File) = File(page.parentFile, page.nameWithoutExtension + ".draft.json")
+
+    fun loadDraft(page: File): String? = draftFile(page).takeIf { it.exists() }?.readText()
+
+    fun saveDraft(page: File, json: String) {
+        draftFile(page).writeText(json)
+        _message.value = "Draft saved. Open ✏ on this page again to carry on."
+    }
+
+    fun deleteDraft(page: File) {
+        draftFile(page).delete()
+    }
+
+    /** A picture placed on a form (photo), kept beside the page so a draft can show it again. */
+    fun keepFormPicture(page: File, bitmap: android.graphics.Bitmap): String {
+        val name = "formpic_${System.currentTimeMillis()}.png"
+        File(page.parentFile, name).outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+        return name
+    }
+
+    // Reusable form templates: where things go on a form, used again on the next copy of it.
+    private val templateDir get() = File(ctx.filesDir, "form_templates").apply { mkdirs() }
+
+    fun formTemplates(): List<String> =
+        templateDir.listFiles { f -> f.extension == "json" }.orEmpty().map { it.nameWithoutExtension }.sorted()
+
+    fun saveFormTemplate(name: String, json: String) {
+        File(templateDir, Exporter.safeName(name.trim()) + ".json").writeText(json)
+        _message.value = "Template \"${name.trim()}\" saved"
+    }
+
+    fun loadFormTemplate(name: String): String? = File(templateDir, "$name.json").takeIf { it.exists() }?.readText()
+
+    fun deleteFormTemplate(name: String) {
+        File(templateDir, "$name.json").delete()
     }
 
     // ---- Writing on a page ----
@@ -526,103 +596,291 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
     // ---- Portal resizer ----
 
     fun portalExport(scan: Scan, spec: PortalSpec, pageIndex: Int, target: Target) = send(target, "Making it fit ${spec.maxKb} KB…") {
-        val (file, note) = io { Exporter.portalFile(ctx, scan, spec, pageIndex) }
-        note?.let { _message.value = it }
-        listOf(file)
+        val r = io { Exporter.portalFile(ctx, scan, spec, pageIndex) }
+        _message.value = r.note ?: "${r.kb} KB" + (if (r.width > 0) ", ${r.width}×${r.height} px" else "")
+        listOf(r.file)
     }
 
-    // ---- Passport photo ----
+    // ---- Passport photo studio ----
 
     private var passportSource: android.graphics.Bitmap? = null
+    private var passportCut: Passport.Cut? = null
     private val _passport = MutableStateFlow<Passport.Result?>(null)
     val passport: StateFlow<Passport.Result?> = _passport
 
-    fun passportFromUri(uri: Uri, then: () -> Unit) = work("Opening photo…") {
-        passportSource = io { Images.decodeUri(ctx, uri, 2400) }
+    /** Everything chosen on the passport screen. */
+    data class PassportLook(
+        val size: PhotoSize = PhotoSize.PRESETS[0],
+        val zoom: Float = 1f,
+        val shiftX: Float = 0f,
+        val shiftY: Float = 0f,
+        /** Background colour, or null for the real background. */
+        val background: Int? = android.graphics.Color.WHITE,
+        val brightness: Float = 0f,
+        val contrast: Float = 1f,
+    )
+
+    private val _passportLook = MutableStateFlow(PassportLook())
+    val passportLook: StateFlow<PassportLook> = _passportLook
+
+    private fun newPassportSource(bmp: android.graphics.Bitmap) {
+        passportSource = bmp
+        passportCut = null
         _passport.value = null
+        _passportLook.value = _passportLook.value.copy(zoom = 1f, shiftX = 0f, shiftY = 0f)
+    }
+
+    fun passportFromUri(uri: Uri, then: () -> Unit) = work("Opening photo…") {
+        newPassportSource(io { Images.decodeUri(ctx, uri, 2400) })
         then()
     }
 
     fun passportFromPage(page: File, then: () -> Unit) = work("Opening photo…") {
-        passportSource = io { Images.decode(page, 2400) }
-        _passport.value = null
+        newPassportSource(io { Images.decode(page, 2400) })
         then()
     }
 
-    fun makePassport(white: Boolean, zoom: Float) = work(if (white) "Finding the face, whitening the background…" else "Finding the face…") {
+    private suspend fun cutPassport(look: PassportLook) {
         val src = passportSource ?: error("Pick a photo first")
-        val result = Passport.make(src, white, zoom)
-        _passport.value = result
-        if (!result.faceFound) _message.value = "No face found: cropped from the centre. Use a clear, front-facing photo."
+        _passportLook.value = look
+        val cut = Passport.cut(src, look.size, look.zoom, look.shiftX, look.shiftY)
+        passportCut = cut
+        val photo = withContext(Dispatchers.Default) { Passport.render(cut, look.background, look.brightness, look.contrast) }
+        _passport.value = Passport.Result(photo, cut.faceFound)
+        when {
+            !cut.faceFound -> _message.value = "No face found: cropped from the centre. Use a clear, front-facing photo."
+            look.background != null && cut.mask == null -> _message.value = "Could not separate the person from the background, so it is kept."
+        }
+    }
+
+    /** New size, face size or position: crops again (finds the face and the person). */
+    fun makePassport(look: PassportLook = _passportLook.value) = work("Finding the face…") { cutPassport(look) }
+
+    /** Background, brightness or contrast: quick, no new crop. */
+    fun restylePassport(look: PassportLook) {
+        _passportLook.value = look
+        val cut = passportCut ?: return
+        viewModelScope.launch {
+            val photo = withContext(Dispatchers.Default) { Passport.render(cut, look.background, look.brightness, look.contrast) }
+            _passport.value = Passport.Result(photo, cut.faceFound)
+        }
+    }
+
+    /** Turns the original photo a quarter turn (for sideways photos) and crops again. */
+    fun rotatePassport(clockwise: Boolean) = work("Turning…") {
+        val src = passportSource ?: error("Pick a photo first")
+        passportSource = io { Images.rotateOnWhite(src, if (clockwise) 90f else -90f) }
+        cutPassport(_passportLook.value.copy(shiftX = 0f, shiftY = 0f))
     }
 
     enum class PassportOutput(val label: String) {
-        PHOTO("Photo (JPG, 35×45 mm)"),
-        PHOTO_50KB("Photo under 50 KB (for portals)"),
-        SHEET_4X6("Print: 4×6 inch sheet, 8 photos"),
-        A4("Print: A4 PDF, 30 photos"),
+        PHOTO("Photo (JPG)"),
+        PNG("Photo (PNG)"),
+        UNDER_KB("Photo under a size limit (for portals)"),
+        SHEET_4X6("Print: 6×4 inch photo paper (JPG)"),
+        A4("Print: A4 sheet (PDF)"),
     }
 
-    fun exportPassport(output: PassportOutput, target: Target) = send(target, "Making the photo…") {
+    /** A4 sheet settings in mm; 0 columns / rows = as many as fit. */
+    data class SheetSetup(val margin: Float = 5f, val gap: Float = 2f, val cols: Int = 0, val rows: Int = 0)
+
+    fun a4Layout(setup: SheetSetup, size: PhotoSize = _passportLook.value.size) =
+        PhotoSheet.layout(PhotoSheet.A4_W, PhotoSheet.A4_H, size.widthMm, size.heightMm, setup.margin, setup.gap, setup.cols, setup.rows)
+
+    fun sheet4x6Count(size: PhotoSize = _passportLook.value.size) =
+        PhotoSheet.layout(PhotoSheet.SIX_W, PhotoSheet.FOUR_H, size.widthMm, size.heightMm, 3f, 2f).count
+
+    fun exportPassport(output: PassportOutput, target: Target, maxKb: Int = 50, setup: SheetSetup = SheetSetup()) = send(target, "Making the photo…") {
         val photo = _passport.value?.photo ?: error("Make the photo first")
+        val size = _passportLook.value.size
         val dir = File(ctx.cacheDir, "export").apply { deleteRecursively(); mkdirs() }
-        val name = "Passport photo ${stamp()}"
+        val name = "Photo ${size.widthMm.toInt()}x${size.heightMm.toInt()} ${stamp()}"
         io {
             listOf(
                 when (output) {
                     PassportOutput.PHOTO -> File(dir, "$name.jpg").apply { writeBytes(Images.encode(photo, 95).jpeg) }
-                    PassportOutput.PHOTO_50KB -> File(dir, "$name.jpg").apply {
-                        writeBytes(SizeFit.fit(50 * 1024, 20 * 1024, allowShrink = false) { _, q -> Images.encode(photo, q).jpeg }.bytes)
+                    PassportOutput.PNG -> File(dir, "$name.png").apply {
+                        outputStream().use { photo.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
                     }
-                    PassportOutput.SHEET_4X6 -> File(dir, "$name 4x6.jpg").apply {
-                        val sheet = Passport.sheet4x6(photo)
+                    PassportOutput.UNDER_KB -> File(dir, "$name.jpg").apply {
+                        val r = SizeFit.fit(maxKb * 1024, 0, allowShrink = true) { scale, q ->
+                            if (scale >= 1f) Images.encode(photo, q).jpeg
+                            else {
+                                val small = android.graphics.Bitmap.createScaledBitmap(photo, (photo.width * scale).toInt().coerceAtLeast(1), (photo.height * scale).toInt().coerceAtLeast(1), true)
+                                Images.encode(small, q).jpeg.also { small.recycle() }
+                            }
+                        }
+                        writeBytes(r.bytes)
+                        _message.value = "${(r.bytes.size + 1023) / 1024} KB" + (if (r.scale < 1f) ", made smaller to fit" else "") +
+                            (if (!r.fits) ": could not get under $maxKb KB" else "")
+                    }
+                    PassportOutput.SHEET_4X6 -> File(dir, "$name 6x4.jpg").apply {
+                        val sheet = Passport.sheet4x6(photo, size)
                         writeBytes(Images.encode(sheet, 95).jpeg)
                         sheet.recycle()
                     }
-                    PassportOutput.A4 -> File(dir, "$name A4.pdf").apply { writeBytes(Passport.a4Sheet(photo)) }
+                    PassportOutput.A4 -> File(dir, "$name A4.pdf").apply {
+                        val layout = a4Layout(setup, size)
+                        if (layout.count == 0) error("No photo fits: make the margin or gap smaller")
+                        writeBytes(Passport.a4Sheet(photo, layout))
+                    }
                 },
             )
         }
     }
 
-    // ---- Signature / stamp cut-out ----
+    // ---- Signature studio ----
 
     private var cutoutSource: android.graphics.Bitmap? = null
     private val _cutout = MutableStateFlow<android.graphics.Bitmap?>(null)
     val cutout: StateFlow<android.graphics.Bitmap?> = _cutout
 
-    fun cutoutFromUris(uris: List<Uri>, then: () -> Unit) = work("Opening…") {
-        cutoutSource = io { Images.decodeUri(ctx, uris.first(), 1800) }
+    /** Cut-out settings: [turns] quarter turns plus a small [tilt] (degrees) to straighten it. */
+    data class CutoutLook(
+        val strength: Float = 0.5f,
+        val ink: Cutout.Ink = Cutout.Ink.ORIGINAL,
+        val darkness: Float = 0f,
+        val turns: Int = 0,
+        val tilt: Float = 0f,
+    )
+
+    private val _cutoutLook = MutableStateFlow(CutoutLook())
+    val cutoutLook: StateFlow<CutoutLook> = _cutoutLook
+
+    private fun newCutoutSource(bmp: android.graphics.Bitmap) {
+        cutoutSource = bmp
         _cutout.value = null
+        _cutoutLook.value = _cutoutLook.value.copy(turns = 0, tilt = 0f)
+    }
+
+    fun cutoutFromUris(uris: List<Uri>, then: () -> Unit) = work("Opening…") {
+        newCutoutSource(io { Images.decodeUri(ctx, uris.first(), 1800) })
         then()
     }
 
     fun cutoutFromPage(page: File, then: () -> Unit) = work("Opening…") {
-        cutoutSource = io { Images.decode(page, 1800) }
-        _cutout.value = null
+        newCutoutSource(io { Images.decode(page, 1800) })
         then()
     }
 
-    fun makeCutout(strength: Float, ink: Cutout.Ink) = work("Cutting out…") {
+    fun makeCutout(look: CutoutLook = _cutoutLook.value) = work("Cutting out…") {
+        _cutoutLook.value = look
         val src = cutoutSource ?: error("Scan a signature first")
-        val result = io { Cutout.cut(Images.toCutout(src), strength, ink)?.let(Images::fromCutout) }
+        val result = io {
+            val turned = Images.rotateOnWhite(src, look.turns * 90f + look.tilt)
+            Cutout.cut(Images.toCutout(turned), look.strength, look.ink, look.darkness)?.let(Images::fromCutout)
+                .also { if (turned !== src) turned.recycle() }
+        }
         if (result == null) error("No ink found. Scan the signature on plain white paper.")
         _cutout.value = result
     }
 
-    fun exportCutout(png: Boolean, target: Target) = send(target, "Saving…") {
-        val img = _cutout.value ?: error("Nothing cut out yet")
+    /** Eraser: makes the marks under the finger see-through. [points] are in the picture's pixels. */
+    fun eraseCutout(points: List<Pair<Float, Float>>, radius: Float) {
+        val img = _cutout.value ?: return
+        if (points.isEmpty()) return
+        val copy = img.copy(android.graphics.Bitmap.Config.ARGB_8888, true)
+        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.CLEAR)
+            style = android.graphics.Paint.Style.STROKE
+            strokeWidth = radius * 2
+            strokeCap = android.graphics.Paint.Cap.ROUND
+            strokeJoin = android.graphics.Paint.Join.ROUND
+        }
+        val path = android.graphics.Path().apply {
+            moveTo(points[0].first, points[0].second)
+            if (points.size == 1) lineTo(points[0].first + 0.1f, points[0].second)
+            points.drop(1).forEach { (x, y) -> lineTo(x, y) }
+        }
+        android.graphics.Canvas(copy).drawPath(path, paint)
+        _cutout.value = copy
+    }
+
+    /** [widthPx] > 0 resizes the signature to that width (keeping its shape). */
+    fun exportCutout(png: Boolean, target: Target, widthPx: Int = 0) = send(target, "Saving…") {
+        val img0 = _cutout.value ?: error("Nothing cut out yet")
+        val img = if (widthPx > 0 && widthPx != img0.width) {
+            android.graphics.Bitmap.createScaledBitmap(img0, widthPx, (img0.height * widthPx.toFloat() / img0.width).toInt().coerceAtLeast(1), true)
+        } else img0
         val dir = File(ctx.cacheDir, "export").apply { deleteRecursively(); mkdirs() }
         io {
             if (png) {
                 listOf(File(dir, "Signature ${stamp()}.png").apply { outputStream().use { img.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) } })
             } else {
                 // JPG has no transparency: put it on white.
-                val white = android.graphics.Bitmap.createBitmap(img.width, img.height, android.graphics.Bitmap.Config.ARGB_8888)
-                android.graphics.Canvas(white).apply { drawColor(android.graphics.Color.WHITE); drawBitmap(img, 0f, 0f, null) }
+                val white = Images.onWhite(img)
                 listOf(File(dir, "Signature ${stamp()}.jpg").apply { writeBytes(Images.encode(white, 95).jpeg) }).also { white.recycle() }
             }
         }
+    }
+
+    /** The signature on white, fitted into exactly [w]×[h] pixels and under [maxKb] (portal rules). */
+    fun exportCutoutForPortal(w: Int, h: Int, minKb: Int, maxKb: Int, target: Target) = send(target, "Making it fit $maxKb KB…") {
+        val img = _cutout.value ?: error("Nothing cut out yet")
+        val dir = File(ctx.cacheDir, "export").apply { deleteRecursively(); mkdirs() }
+        io {
+            val fitted = Images.fitOnWhite(img, w, h)
+            val r = SizeFit.fit(maxKb * 1024, minKb * 1024, allowShrink = false) { _, q -> Images.encode(fitted, q).jpeg }
+            fitted.recycle()
+            val kb = (r.bytes.size + 1023) / 1024
+            _message.value = when {
+                !r.fits -> "Could not get it under $maxKb KB (smallest: $kb KB)"
+                r.bytes.size < minKb * 1024 -> "It is $kb KB, under the $minKb KB minimum. Try a larger pixel size."
+                else -> "$w×$h px, $kb KB"
+            }
+            listOf(File(dir, "Signature ${w}x$h.jpg").apply { writeBytes(r.bytes) })
+        }
+    }
+
+    // ---- Personal signature library (kept in the app's private storage, behind the app lock) ----
+
+    val signatures = SignatureLibrary(app)
+    private val _signatureList = MutableStateFlow(signatures.list())
+    val signatureList: StateFlow<List<SignatureLibrary.Item>> = _signatureList
+
+    fun saveToLibrary(name: String) = work("Saving…") {
+        val img = _cutout.value ?: error("Nothing cut out yet")
+        io { signatures.add(name.trim().ifBlank { "Signature" }, img) }
+        _signatureList.value = signatures.list()
+        _message.value = "Saved in My signatures"
+    }
+
+    fun deleteFromLibrary(item: SignatureLibrary.Item) {
+        signatures.delete(item)
+        _signatureList.value = signatures.list()
+    }
+
+    fun openFromLibrary(item: SignatureLibrary.Item) = work("Opening…") {
+        _cutout.value = io { android.graphics.BitmapFactory.decodeFile(item.file.path) } ?: error("Could not open it")
+    }
+
+    fun shareFromLibrary(item: SignatureLibrary.Item, target: Target) = send(target, "Saving…") {
+        val dir = File(ctx.cacheDir, "export").apply { deleteRecursively(); mkdirs() }
+        listOf(io { item.file.copyTo(File(dir, Exporter.safeName(item.name) + ".png"), overwrite = true) })
+    }
+
+    // ---- Portal presets ----
+
+    private val _portalPresets = MutableStateFlow(PortalSpec.fromJson(prefs.getString(KEY_PORTAL_PRESETS, null)))
+    val portalPresets: StateFlow<List<PortalSpec>> = _portalPresets
+
+    fun savePortalPreset(spec: PortalSpec) {
+        val list = _portalPresets.value.filter { it.label != spec.label } + spec
+        prefs.edit().putString(KEY_PORTAL_PRESETS, PortalSpec.toJson(list)).apply()
+        _portalPresets.value = list
+        _message.value = "Saved \"${spec.label}\""
+    }
+
+    fun deletePortalPreset(spec: PortalSpec) {
+        val list = _portalPresets.value.filter { it.label != spec.label }
+        prefs.edit().putString(KEY_PORTAL_PRESETS, PortalSpec.toJson(list)).apply()
+        _portalPresets.value = list
+    }
+
+    /** Makes the portal file and reports its size and whether it meets the rules (before saving). */
+    fun portalCheck(scan: Scan, spec: PortalSpec, pageIndex: Int, then: (String) -> Unit) = work("Checking…") {
+        val r = io { Exporter.portalFile(ctx, scan, spec, pageIndex) }
+        then(r.report(spec))
     }
 
     // ---- College stamp & signature ----
@@ -976,6 +1234,7 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
         const val KEY_LAST_BACKUP = "last_backup"
         const val KEY_AUTO_SORT = "auto_sort"
         const val KEY_LAST_CHECK = "update_last_check"
+        const val KEY_PORTAL_PRESETS = "portal_presets"
         const val STUDENT_DOCS = "Student documents"
     }
 }

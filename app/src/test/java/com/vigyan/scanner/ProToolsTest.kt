@@ -217,3 +217,78 @@ class PdfFooterTest {
         }
     }
 }
+
+class PhotoSheetTest {
+    @Test
+    fun thirtyPassportPhotosOnA4() {
+        val l = PhotoSheet.layout(PhotoSheet.A4_W, PhotoSheet.A4_H, 35f, 45f, 5f, 2f)
+        assertEquals(5, l.cols)
+        assertEquals(6, l.rows)
+        assertEquals(30, l.count)
+        // Everything stays inside the margins and nothing overlaps.
+        assertTrue(l.positions.all { (x, y) -> x >= 5f && y >= 5f && x + 35f <= 205f && y + 45f <= 292f })
+        assertTrue(l.positions.zipWithNext().all { (a, b) -> a != b })
+    }
+
+    @Test
+    fun eightOnSixByFourAndLimits() {
+        assertEquals(8, PhotoSheet.layout(PhotoSheet.SIX_W, PhotoSheet.FOUR_H, 35f, 45f, 3f, 2f).count)
+        assertEquals(6, PhotoSheet.layout(PhotoSheet.A4_W, PhotoSheet.A4_H, 35f, 45f, 5f, 2f, maxCols = 3, maxRows = 2).count)
+        // 2x2 inch photos: fewer fit.
+        assertEquals(15, PhotoSheet.layout(PhotoSheet.A4_W, PhotoSheet.A4_H, 51f, 51f, 5f, 2f).count)
+        assertEquals(0, PhotoSheet.layout(PhotoSheet.A4_W, PhotoSheet.A4_H, 35f, 45f, 120f, 2f).count)
+    }
+
+    @Test
+    fun squareCropAndShift() {
+        val c = PassportMath.crop(400, 300, 600, 550, 1000, 1400, aspect = 1f, headShare = 0.6f)
+        assertEquals(c[2], c[3]) // square
+        val moved = PassportMath.crop(400, 300, 600, 550, 1000, 1400, shiftX = 0.1f)
+        val plain = PassportMath.crop(400, 300, 600, 550, 1000, 1400)
+        assertTrue(moved[0] > plain[0])
+        assertEquals(413, PassportMath.mmToPx(35f))
+    }
+}
+
+class FormFillTest {
+    @Test
+    fun findsBlankFields() {
+        assertEquals("name", FormExtractor.blankLabel("Name : ____________"))
+        assertEquals("father", FormExtractor.blankLabel("Father's Name ........"))
+        assertEquals("dob", FormExtractor.blankLabel("Date of Birth:"))
+        assertEquals("mobile1", FormExtractor.blankLabel("Mobile No. ________"))
+        assertEquals(null, FormExtractor.blankLabel("Name : Ravi Kumar"))
+        assertEquals(null, FormExtractor.blankLabel("Instructions for filling the form"))
+        val (key, end) = FormExtractor.blankLabelEnd("Name : ______")!!
+        assertEquals("name", key)
+        assertEquals(7, end) // after "Name : "
+    }
+}
+
+class PortalPresetTest {
+    @Test
+    fun savesAndLoadsPresets() {
+        val list = listOf(
+            PortalSpec("OJEE photo", pdf = false, width = 200, height = 230, minKb = 10, maxKb = 50),
+            PortalSpec("Marksheet PDF", pdf = true, maxKb = 300, gray = true),
+            PortalSpec("Sign PNG", pdf = false, width = 140, height = 60, maxKb = 20, png = true),
+        )
+        assertEquals(list, PortalSpec.fromJson(PortalSpec.toJson(list)))
+        assertEquals(emptyList<PortalSpec>(), PortalSpec.fromJson("not json"))
+    }
+}
+
+class CutoutDarknessTest {
+    @Test
+    fun darkerInkIsMoreOpaqueAndDarker() {
+        val w = 40
+        val h = 20
+        // Paper 230, a grey stroke of 150 across the middle.
+        val px = IntArray(w * h) { i -> val v = if ((i / w) in 8..11) 150 else 230; (0xFF shl 24) or (v shl 16) or (v shl 8) or v }
+        val plain = Cutout.cut(Cutout.Image(px, w, h), 0.5f)!!
+        val dark = Cutout.cut(Cutout.Image(px, w, h), 0.5f, darkness = 1f)!!
+        val i = plain.pixels.indices.maxBy { plain.pixels[it] ushr 24 }
+        assertTrue((dark.pixels[i] ushr 24) >= (plain.pixels[i] ushr 24))
+        assertTrue((dark.pixels[i] and 0xFF) < (plain.pixels[i] and 0xFF))
+    }
+}

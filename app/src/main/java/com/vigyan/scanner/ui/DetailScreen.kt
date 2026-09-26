@@ -116,6 +116,7 @@ fun DetailScreen(
 
     var pdf by rememberSaveable { mutableStateOf(true) }
     var jpg by rememberSaveable { mutableStateOf(false) }
+    var png by rememberSaveable { mutableStateOf(false) }
     var txt by rememberSaveable { mutableStateOf(false) }
     var quality by rememberSaveable { mutableStateOf(settings.quality) }
     var searchable by rememberSaveable { mutableStateOf(true) }
@@ -262,6 +263,7 @@ fun DetailScreen(
                     )
                     CheckRow("PDF", pdf) { pdf = it }
                     CheckRow("JPG images (one per page)", jpg) { jpg = it }
+                    CheckRow("PNG images (one per page, sharper, bigger)", png) { png = it }
                     CheckRow("Text file (.txt)", txt) { txt = it }
 
                     Text("Size", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
@@ -316,7 +318,7 @@ fun DetailScreen(
                         }
                     }
 
-                    if (pdf || jpg) {
+                    if (pdf || jpg || png) {
                         // Re-read when the settings screen changes the seal / signature.
                         val hasSeal = remember(brandingVersion) { vm.branding.hasSeal() }
                         val hasSig = remember(brandingVersion) { vm.branding.hasSignature() }
@@ -339,6 +341,7 @@ fun DetailScreen(
                     val formats = buildSet {
                         if (pdf) add(Format.PDF)
                         if (jpg) add(Format.JPG)
+                        if (png) add(Format.PNG)
                         if (txt) add(Format.TXT)
                     }
                     val passwordOk = !pdf || !lock || (password.isNotEmpty() && password.all { it.code in 32..126 })
@@ -581,20 +584,26 @@ private fun PageViewer(page: File, title: String, onDismiss: () -> Unit) {
     }
 }
 
-/** Portal resizer: pick a preset (or custom size) and get a file under the portal's KB limit. */
+/** Portal resizer: pick a preset (yours or a built-in one, or custom) and get a file within the portal's limits. */
 @Composable
 private fun ResizeDialog(vm: ScanViewModel, scan: Scan, onDismiss: () -> Unit) {
-    var preset by rememberSaveable { mutableStateOf(0) } // index in PRESETS, or -1 = custom
+    val saved by vm.portalPresets.collectAsStateWithLifecycle()
+    val all = saved + PortalSpec.PRESETS
+    var preset by rememberSaveable { mutableStateOf(saved.size) } // index in [all], or -1 = custom
     var page by rememberSaveable { mutableStateOf(0) }
     var gray by rememberSaveable { mutableStateOf(false) }
+    var asPng by rememberSaveable { mutableStateOf(false) }
     var customPdf by rememberSaveable { mutableStateOf(false) }
     var customW by rememberSaveable { mutableStateOf("") }
     var customH by rememberSaveable { mutableStateOf("") }
     var customMin by rememberSaveable { mutableStateOf("") }
     var customMax by rememberSaveable { mutableStateOf("100") }
+    var presetName by rememberSaveable { mutableStateOf("") }
+    var report by rememberSaveable { mutableStateOf("") }
 
-    val spec = if (preset >= 0) {
-        PortalSpec.PRESETS[preset].copy(gray = gray)
+    val base = all.getOrNull(preset)
+    val spec = if (preset >= 0 && base != null) {
+        base.copy(gray = gray || base.gray, png = !base.pdf && (asPng || base.png))
     } else {
         PortalSpec(
             label = "Custom",
@@ -605,6 +614,7 @@ private fun ResizeDialog(vm: ScanViewModel, scan: Scan, onDismiss: () -> Unit) {
             maxKb = customMax.toIntOrNull() ?: 0,
             gray = gray,
             suffix = "resized",
+            png = !customPdf && asPng,
         )
     }
     val valid = spec.maxKb > 0 && spec.minKb <= spec.maxKb && (spec.width > 0) == (spec.height > 0)
@@ -613,24 +623,28 @@ private fun ResizeDialog(vm: ScanViewModel, scan: Scan, onDismiss: () -> Unit) {
         onDismissRequest = onDismiss,
         title = { Text("Resize for portal") },
         text = {
-            Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState())) {
+            Column(Modifier.heightIn(max = 540.dp).verticalScroll(rememberScrollState())) {
                 Text(
                     "Check the portal's instructions for the exact pixel size and KB limit, and use Custom if they differ.",
                     style = MaterialTheme.typography.bodySmall,
                 )
-                PortalSpec.PRESETS.forEachIndexed { i, p ->
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { preset = i }) {
-                        RadioButton(selected = preset == i, onClick = { preset = i })
-                        Text(p.label, style = MaterialTheme.typography.bodyMedium)
+                all.forEachIndexed { i, p ->
+                    val mine = i < saved.size
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { preset = i; report = "" }) {
+                        RadioButton(selected = preset == i, onClick = { preset = i; report = "" })
+                        Text((if (mine) "★ " else "") + p.label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                        if (mine) {
+                            TextButton(onClick = { vm.deletePortalPreset(p); preset = -1 }) { Text("✕") }
+                        }
                     }
                 }
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { preset = -1 }) {
-                    RadioButton(selected = preset == -1, onClick = { preset = -1 })
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { preset = -1; report = "" }) {
+                    RadioButton(selected = preset == -1, onClick = { preset = -1; report = "" })
                     Text("Custom", style = MaterialTheme.typography.bodyMedium)
                 }
                 if (preset == -1) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        FilterChip(selected = !customPdf, onClick = { customPdf = false }, label = { Text("JPG") })
+                        FilterChip(selected = !customPdf, onClick = { customPdf = false }, label = { Text("Photo / image") })
                         Spacer(Modifier.width(8.dp))
                         FilterChip(selected = customPdf, onClick = { customPdf = true }, label = { Text("PDF") })
                     }
@@ -645,13 +659,27 @@ private fun ResizeDialog(vm: ScanViewModel, scan: Scan, onDismiss: () -> Unit) {
                         NumberField("Min KB", customMin, Modifier.weight(1f)) { customMin = it }
                         NumberField("Max KB", customMax, Modifier.weight(1f)) { customMax = it }
                     }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(
+                            presetName, { presetName = it },
+                            label = { Text("Name, e.g. OJEE photo") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(
+                            onClick = { vm.savePortalPreset(spec.copy(label = presetName.trim())); presetName = ""; preset = 0 },
+                            enabled = valid && presetName.isNotBlank(),
+                        ) { Text("Save") }
+                    }
+                    Text("Save it to find it at the top next time.", style = MaterialTheme.typography.bodySmall)
                 }
-                CheckRow("Black & white (smaller files, fine for documents)", gray) { gray = it }
+                CheckRow("Black & white (smaller files, fine for documents)", gray) { gray = it; report = "" }
+                if (!spec.pdf) CheckRow("PNG instead of JPG", asPng || spec.png) { asPng = it; report = "" }
                 if (!spec.pdf && scan.pages.size > 1) {
                     Text("Which page", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 4.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
                         scan.pages.indices.forEach { i ->
-                            FilterChip(selected = page == i, onClick = { page = i }, label = { Text("Page ${i + 1}") })
+                            FilterChip(selected = page == i, onClick = { page = i; report = "" }, label = { Text("Page ${i + 1}") })
                         }
                     }
                 }
@@ -661,6 +689,16 @@ private fun ResizeDialog(vm: ScanViewModel, scan: Scan, onDismiss: () -> Unit) {
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.padding(vertical = 4.dp),
                     )
+                }
+                OutlinedButton(
+                    onClick = { vm.portalCheck(scan, spec, page) { report = it } },
+                    enabled = valid,
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                ) { Text("Check the result first") }
+                if (report.isNotEmpty()) {
+                    Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                        Text(report, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(10.dp))
+                    }
                 }
                 Column(Modifier.padding(top = 8.dp)) {
                     SendButtons(enabled = valid, onDenied = { vm.say("Storage permission is needed to save to the phone") }) { target ->
