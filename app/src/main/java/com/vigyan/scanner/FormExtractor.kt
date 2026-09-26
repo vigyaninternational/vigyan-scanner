@@ -70,6 +70,8 @@ object FormExtractor {
     private val NOT_PERSON = Regex(NOT_PERSON_WORDS, RegexOption.IGNORE_CASE)
     private val NAME_OF_THING = Regex("""^\s*of\s+(?:the\s+)?(?:$NOT_PERSON_WORDS)""", RegexOption.IGNORE_CASE)
     private val GAP = Regex("""\s{3,}""")
+    /** Separate pieces of text on a row (3+ spaces apart). */
+    private val CELL = Regex("""\S+(?:\s{1,2}\S+)*""")
     private val LEAD = Regex("""^[\s:;.\-–—=|>)]+""")
 
     private val MONTHS = listOf("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")
@@ -86,11 +88,21 @@ object FormExtractor {
             hits.forEachIndexed { h, hit ->
                 val stop = if (h + 1 < hits.size) hits[h + 1].start else line.length
                 var value = line.substring(hit.end, stop).replace(LEAD, "").trim()
-                // "Name :" on one line and the value on the next.
-                if (value.isEmpty() && i + 1 < lines.size && hitsPerLine[i + 1].isEmpty()) {
-                    // A row of labels over a row of values ("ROLL NO.   REGN. NO." then "328HA026   HA28S21026"): match by column.
-                    val cells = lines[i + 1].split(GAP).filter { it.isNotBlank() }
-                    value = if (hits.size > 1 && cells.size >= hits.size) cells[h] else lines[i + 1]
+                val next = lines.getOrNull(i + 1)?.takeIf { hitsPerLine[i + 1].isEmpty() }
+                // A row of column headings over a row of values ("ROLL NO.   REGN. NO.   STREAM" then
+                // "328HA026   HA28S21026   SCIENCE"): the value is in the same column below.
+                val headCells = CELL.findAll(line).toList()
+                val nextCells = next?.let { n -> CELL.findAll(n).map { it.value }.toList() }.orEmpty()
+                val column = headCells.indexOfFirst { hit.start in it.range }
+                // Only a heading on its own (nothing written after the label in its piece of the row).
+                val bareHeading = column >= 0 && (headCells[column].range.last + 1).let { end ->
+                    hit.end >= end || line.substring(hit.end, end).replace(LEAD, "").isBlank()
+                }
+                if (hits.size > 1 && headCells.size >= 2 && nextCells.size == headCells.size && bareHeading && value.none(Char::isDigit)) {
+                    value = nextCells[column]
+                } else if (value.isEmpty() && next != null) {
+                    // "Name :" on one line and the value on the next.
+                    value = next
                 }
                 if (hit.field == "address") {
                     // An address usually runs over the next line or two.
