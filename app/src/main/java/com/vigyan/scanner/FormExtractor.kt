@@ -232,6 +232,29 @@ object FormExtractor {
     }
 
     // Script lettering is often misread ("Certifed thal", "Cerlified hat"), so this is loose.
+    /**
+     * Two readings of the same scan: [original] and one of a cleaned copy ([cleaned], only dark
+     * ink kept). Names come from whichever has the fuller name (a patterned background often
+     * breaks them up); marks from whichever found more subjects; the rest from the original.
+     */
+    fun merge(original: Map<String, String>, cleaned: Map<String, String>): Map<String, String> {
+        fun words(v: String) = v.split(Regex("""\s+""")).count { w -> w.count(Char::isLetter) >= 2 }
+        val marksA = original["marks"]?.lines()?.size ?: 0
+        val marksB = cleaned["marks"]?.lines()?.size ?: 0
+        return FIELDS.mapNotNull { f ->
+            val a = original[f.key]?.takeIf { it.isNotBlank() }
+            val b = cleaned[f.key]?.takeIf { it.isNotBlank() }
+            val v = when {
+                a == null -> b
+                b == null -> a
+                f.key in setOf("name", "father", "mother", "school") -> if (words(b) >= words(a)) b else a
+                f.key in setOf("marks", "total", "percent") -> if (marksB >= marksA) b else a
+                else -> a
+            }
+            v?.let { f.key to it }
+        }.toMap()
+    }
+
     private val CERTIFIED = Regex("""c[a-z]{2,9}\s+t?h[a-z]{1,3}(?![a-z])\s*[:\-]?\s*""", RegexOption.IGNORE_CASE)
 
     /** "(Mother)", "(Father)" beside a parent's name, allowing for a misread letter. */

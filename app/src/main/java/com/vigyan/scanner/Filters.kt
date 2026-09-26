@@ -13,6 +13,7 @@ enum class PageFilter(val label: String, val hint: String) {
     SHADOW("🌗 Remove shadows", "Evens out shadows and uneven light, colours kept"),
     GRAY("⚪ Grayscale", "Grey, smaller file"),
     BW("⚫ Black & white", "Crisp text, smallest file; best for printed pages"),
+    INK("🧾 Clear background pattern", "Only the printed text stays: for certificates and marksheets with a coloured pattern"),
 }
 
 object Filters {
@@ -22,6 +23,26 @@ object Filters {
         PageFilter.GRAY -> Images.grayscale(src)
         PageFilter.SHADOW -> flatten(src, bw = false)
         PageFilter.BW -> flatten(src, bw = true)
+        PageFilter.INK -> inkOnly(src)
+    }
+
+    /** Only dark, uncoloured ink stays (see FilterMath.inkOnly). */
+    fun inkOnly(src: Bitmap): Bitmap {
+        val threshold = FilterMath.inkThreshold(Perspective.sample(src, 300).lum)
+        val w = src.width
+        val h = src.height
+        val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val band = 64
+        val px = IntArray(w * band)
+        var y = 0
+        while (y < h) {
+            val rows = minOf(band, h - y)
+            src.getPixels(px, 0, w, 0, y, w, rows)
+            FilterMath.inkOnly(px, threshold)
+            out.setPixels(px, 0, w, 0, y, w, rows)
+            y += rows
+        }
+        return out
     }
 
     /** Levels taken from the page itself: its paper becomes white and its ink black. */

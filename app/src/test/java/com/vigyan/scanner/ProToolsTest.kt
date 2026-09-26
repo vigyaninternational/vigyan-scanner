@@ -394,3 +394,34 @@ class MessyCertificateTest {
         assertEquals(null, FormExtractor.capsName("passed the High School Certificate"))
     }
 }
+
+class InkOnlyTest {
+    private fun rgb(r: Int, g: Int, b: Int) = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+
+    @Test
+    fun keepsBlackTextAndWipesThePattern() {
+        val px = intArrayOf(
+            rgb(20, 20, 20), // black printed name
+            rgb(160, 90, 150), // purple security pattern
+            rgb(170, 170, 170), // light grey guilloche line
+            rgb(245, 245, 245), // paper
+            rgb(200, 30, 40), // red seal
+        )
+        val t = FilterMath.inkThreshold(IntArray(100) { if (it < 10) 20 else 240 })
+        assertEquals(115, t)
+        FilterMath.inkOnly(px, t)
+        assertTrue((px[0] and 0xFF) < 40)
+        assertTrue(px.drop(1).all { (it and 0xFF) == 255 })
+    }
+
+    @Test
+    fun mergeTakesTheFullerName() {
+        val original = mapOf("name" to "PRAGYNA", "father" to "AOCHAN PARAJA", "dob" to "21/12/2008")
+        val cleaned = mapOf("name" to "PRAGYNA PARAMITA NAYAK", "father" to "KAMALA LOCHAN PARAJA", "mother" to "SUSHILA PARAJA", "dob" to "21/12/2003")
+        val m = FormExtractor.merge(original, cleaned)
+        assertEquals("PRAGYNA PARAMITA NAYAK", m["name"])
+        assertEquals("KAMALA LOCHAN PARAJA", m["father"])
+        assertEquals("SUSHILA PARAJA", m["mother"])
+        assertEquals("21/12/2008", m["dob"]) // the original reading wins for everything else
+    }
+}

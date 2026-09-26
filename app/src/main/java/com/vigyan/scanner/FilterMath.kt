@@ -94,5 +94,36 @@ object FilterMath {
         }
     }
 
+    /**
+     * "Ink only": the darkness below which a pixel counts as ink, from the page's own paper
+     * brightness (a sample of brightness values), so a dim photo works too.
+     */
+    fun inkThreshold(lum: IntArray): Int {
+        if (lum.isEmpty()) return 110
+        val sorted = lum.sorted()
+        val paper = sorted[(sorted.size * 0.9).toInt().coerceAtMost(sorted.size - 1)]
+        return (paper * 0.48f).toInt().coerceIn(70, 140)
+    }
+
+    /** Colours above this saturation (purple security pattern, blue seals…) are wiped out. */
+    const val INK_SATURATION = 60
+
+    /**
+     * Keeps only dark, uncoloured ink (printed text): the coloured or light background pattern of
+     * certificates and ID cards turns white. Works in place on [px].
+     */
+    fun inkOnly(px: IntArray, threshold: Int) {
+        for (i in px.indices) {
+            val p = px[i]
+            val r = (p shr 16) and 0xFF
+            val g = (p shr 8) and 0xFF
+            val b = p and 0xFF
+            val lum = (r * 299 + g * 587 + b * 114) / 1000
+            val sat = maxOf(r, g, b) - minOf(r, g, b)
+            val v = if (sat > INK_SATURATION || lum >= threshold) 255 else lum * 255 / (2 * threshold)
+            px[i] = (0xFF shl 24) or (v shl 16) or (v shl 8) or v
+        }
+    }
+
     private fun scale(v: Int, paper: Float) = (v * 255f / paper.coerceAtLeast(1f)).toInt().coerceIn(0, 255)
 }

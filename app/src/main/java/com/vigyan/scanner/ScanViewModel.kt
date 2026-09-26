@@ -964,10 +964,33 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
     /** Fields from the text, with an Aadhaar QR (if the pages have one) taking priority. */
     private suspend fun extractFields(scan: Scan, prefix: String = ""): Pair<Map<String, String>, Boolean> {
         val s = ocrMissing(scan, prefix = prefix)
-        val fromText = FormExtractor.extract(s.rows ?: s.text.orEmpty())
+        val original = FormExtractor.extract(s.rows ?: s.text.orEmpty())
+        // Certificates and ID cards have patterned, coloured backgrounds that confuse the reader.
+        // Read a copy with only the dark ink kept too, and take the better answer per field.
+        _busy.value = prefix + "reading a cleaned-up copy…"
+        val cleaned = runCatching { FormExtractor.extract(inkOnlyRows(s)) }.getOrNull()
+        val fromText = if (cleaned != null) FormExtractor.merge(original, cleaned) else original
         _busy.value = prefix + "looking for an Aadhaar QR code…"
         val qr = Ocr.readQrCodes(ctx, s.pages.take(4)).firstNotNullOfOrNull { AadhaarQr.parse(it) }
         return if (qr != null) (fromText + qr) to true else fromText to false
+    }
+
+    /** Text rows of the scan's pages (first 4) with the background pattern and colours wiped out. */
+    private suspend fun inkOnlyRows(scan: Scan): String {
+        val dir = File(ctx.cacheDir, "inkonly").apply { deleteRecursively(); mkdirs() }
+        val files = io {
+            scan.pages.take(4).mapIndexed { i, page ->
+                File(dir, "page$i.jpg").also { f ->
+                    val src = Images.decode(page, 2400)
+                    val clean = Filters.inkOnly(src)
+                    src.recycle()
+                    Images.save(clean, f, 92)
+                    clean.recycle()
+                }
+            }
+        }
+        val results = Ocr.readPages(ctx, files, _lang.value)
+        return OcrLayout.combine(results).second
     }
 
     private val defaultName = Regex("""^(Scan|Imported|Merged|Document \d+|Form \d+)\b.*""")
