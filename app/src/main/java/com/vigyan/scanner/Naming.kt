@@ -29,7 +29,7 @@ object Naming {
         )
         var t = template.ifBlank { DEFAULT }
         for ((k, v) in values) {
-            if (v.isEmpty()) t = t.replace(Regex("""[_\- ]?\{$k\}|\{$k\}[_\- ]?"""), "")
+            if (v.isEmpty()) t = t.replace(Regex("""\{$k\}[_\- ]|[_\- ]\{$k\}|\{$k\}"""), "")
         }
         for ((k, v) in values) t = t.replace("{$k}", v)
         return t.trim().ifBlank { name.trim() }
