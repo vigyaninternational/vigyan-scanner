@@ -172,10 +172,44 @@ fun DetailScreen(
             )
         },
     ) { padding ->
-        Column(
-            Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
+        Column(Modifier.fillMaxSize().padding(padding)) {
+            // The pages stay in view at the top while the buttons and save options below scroll.
+            LazyRow(
+                Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)).padding(vertical = 6.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                itemsIndexed(scan.pages, key = { _, page -> page.name + page.lastModified() }) { i, page ->
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        AsyncImage(
+                            // lastModified in the key reloads a page after it is rotated.
+                            model = ImageRequest.Builder(LocalContext.current).data(page).memoryCacheKey(page.path + page.lastModified()).build(),
+                            contentDescription = "Page ${i + 1}",
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.height(200.dp).width(145.dp)
+                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                                .clickable { pageIndex = i; dialog = "view" },
+                        )
+                        Text("Page ${i + 1} of ${scan.pages.size}", style = MaterialTheme.typography.labelMedium)
+                        Row {
+                            SmallButton("◀", enabled = i > 0) { vm.movePage(scan, i, i - 1) }
+                            SmallButton("⟳") { vm.rotatePage(scan, i) }
+                            SmallButton("⛶") { onTool("crop/${scan.id}/$i") }
+                        }
+                        Row {
+                            SmallButton("🎨") { pageIndex = i; dialog = "filter" }
+                            SmallButton("✏") { onTool("annotate/${scan.id}/$i") }
+                            SmallButton("✕", enabled = scan.pages.size > 1) { pageToDelete = i; dialog = "deletePage" }
+                            SmallButton("▶", enabled = i < scan.pages.size - 1) { vm.movePage(scan, i, i + 1) }
+                        }
+                    }
+                }
+            }
+            androidx.compose.material3.HorizontalDivider()
+            Column(
+                Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()).padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
             if (scan.person.isNotEmpty()) {
                 Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
                     Column(Modifier.padding(12.dp)) {
@@ -195,33 +229,6 @@ fun DetailScreen(
                             "Arrange the pages below (◀ ▶), add more any time, then Save as one PDF: ${Naming.personFile(scan.person, scan.ref)}.pdf",
                             style = MaterialTheme.typography.bodySmall,
                         )
-                    }
-                }
-            }
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                itemsIndexed(scan.pages, key = { _, page -> page.name + page.lastModified() }) { i, page ->
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        AsyncImage(
-                            // lastModified in the key reloads a page after it is rotated.
-                            model = ImageRequest.Builder(LocalContext.current).data(page).memoryCacheKey(page.path + page.lastModified()).build(),
-                            contentDescription = "Page ${i + 1}",
-                            contentScale = ContentScale.Fit,
-                            modifier = Modifier.height(280.dp).width(200.dp)
-                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                                .clickable { pageIndex = i; dialog = "view" },
-                        )
-                        Text("Page ${i + 1} of ${scan.pages.size}", style = MaterialTheme.typography.labelMedium)
-                        Row {
-                            SmallButton("◀", enabled = i > 0) { vm.movePage(scan, i, i - 1) }
-                            SmallButton("⟳") { vm.rotatePage(scan, i) }
-                            SmallButton("⛶") { onTool("crop/${scan.id}/$i") }
-                            SmallButton("▶", enabled = i < scan.pages.size - 1) { vm.movePage(scan, i, i + 1) }
-                        }
-                        Row {
-                            SmallButton("🎨") { pageIndex = i; dialog = "filter" }
-                            SmallButton("✏") { onTool("annotate/${scan.id}/$i") }
-                            SmallButton("✕", enabled = scan.pages.size > 1) { pageToDelete = i; dialog = "deletePage" }
-                        }
                     }
                 }
             }
@@ -379,6 +386,7 @@ fun DetailScreen(
                         modifier = Modifier.padding(top = 8.dp),
                     )
                 }
+            }
             }
         }
     }

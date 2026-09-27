@@ -70,7 +70,14 @@ import com.vigyan.scanner.ScanViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ToolScaffold(title: String, onBack: () -> Unit, helpTopic: String = "start", content: @Composable () -> Unit) {
+fun ToolScaffold(
+    title: String,
+    onBack: () -> Unit,
+    helpTopic: String = "start",
+    /** Stays fixed under the top bar (e.g. the picture being edited) while [content] scrolls. */
+    header: (@Composable () -> Unit)? = null,
+    content: @Composable () -> Unit,
+) {
     Scaffold(
         topBar = {
             TopAppBar(
@@ -80,10 +87,21 @@ fun ToolScaffold(title: String, onBack: () -> Unit, helpTopic: String = "start",
             )
         },
     ) { padding ->
-        Column(
-            Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) { content() }
+        Column(Modifier.fillMaxSize().padding(padding)) {
+            if (header != null) {
+                Column(
+                    Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) { header() }
+                androidx.compose.material3.HorizontalDivider()
+            }
+            Column(
+                Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()).padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) { content() }
+        }
     }
 }
 
@@ -125,20 +143,23 @@ fun PassportScreen(vm: ScanViewModel, onBack: () -> Unit) {
         rows = rows.toIntOrNull() ?: 0,
     )
 
-    ToolScaffold("Passport photo studio", onBack, "passport") {
-        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+    ToolScaffold(
+        "Passport photo studio", onBack, "passport",
+        // The photo stays in view while the settings below scroll.
+        header = {
             result?.photo?.let { photo ->
                 Image(
                     bitmap = photo.asImageBitmap(),
                     contentDescription = "Passport photo",
-                    modifier = Modifier.width(200.dp).height((200f * photo.height / photo.width).dp).border(1.dp, MaterialTheme.colorScheme.outline),
+                    modifier = Modifier.height(210.dp).width((210f * photo.width / photo.height).dp).border(1.dp, MaterialTheme.colorScheme.outline),
                 )
-            } ?: Text("Making the photo…")
-        }
-        Text(
-            "${look.size.widthMm.toInt()}×${look.size.heightMm.toInt()} mm · ${look.size.widthPx}×${look.size.heightPx} px at 300 dpi",
-            style = MaterialTheme.typography.bodySmall,
-        )
+            } ?: Text("Making the photo…", modifier = Modifier.padding(vertical = 40.dp))
+            Text(
+                "${look.size.widthMm.toInt()}×${look.size.heightMm.toInt()} mm · ${look.size.widthPx}×${look.size.heightPx} px at 300 dpi",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        },
+    ) {
 
         Text("Size", style = MaterialTheme.typography.titleSmall)
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
@@ -384,11 +405,12 @@ fun CutoutScreen(vm: ScanViewModel, onBack: () -> Unit, onBranding: () -> Unit) 
 
     LaunchedEffect(Unit) { if (vm.cutout.value == null) vm.makeCutout() }
 
-    ToolScaffold("Signature studio", onBack, "signature") {
+    // The signature stays in view while the settings below scroll.
+    ToolScaffold("Signature studio", onBack, "signature", header = {
         // Checkerboard behind the picture shows which parts are see-through. With the eraser on,
         // dragging over the picture rubs marks out.
         BoxWithConstraints(
-            Modifier.fillMaxWidth().height(200.dp).border(1.dp, MaterialTheme.colorScheme.outline).drawBehind {
+            Modifier.fillMaxWidth().height(170.dp).border(1.dp, MaterialTheme.colorScheme.outline).drawBehind {
                 val cell = 12.dp.toPx()
                 var y = 0f
                 var row = 0
@@ -435,6 +457,7 @@ fun CutoutScreen(vm: ScanViewModel, onBack: () -> Unit, onBranding: () -> Unit) 
             }
         }
         if (erasing) Text("Drag over spots or lines to rub them out. Changing a setting below starts again.", style = MaterialTheme.typography.bodySmall)
+    }) {
 
         Text("Turn and straighten", style = MaterialTheme.typography.titleSmall)
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
