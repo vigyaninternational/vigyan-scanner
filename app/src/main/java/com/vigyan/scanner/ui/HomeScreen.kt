@@ -472,7 +472,7 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit, onNavigate: 
                 }
             }
             if (!showTrash) item {
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     item { FilterChip(selected = folder == null && !favoritesOnly, onClick = { vm.showFolder(null); favoritesOnly = false }, label = { Text("All (${scans.size})") }) }
                     item {
                         FilterChip(

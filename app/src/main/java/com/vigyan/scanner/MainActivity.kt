@@ -68,6 +68,7 @@ class MainActivity : FragmentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        CrashLog.install(this)
         // Turning the phone keeps the unlocked state; a fresh start is locked.
         locked = appLock.enabled && (savedInstanceState?.getBoolean(KEY_LOCKED, true) ?: true)
         if (savedInstanceState == null) handleShared(intent)
@@ -233,6 +234,36 @@ class MainActivity : FragmentActivity() {
             SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(8.dp))
         }
         busy?.let { BusyDialog(it) }
+        // The app closed with an error last time: show it, so it can be sent and fixed.
+        var crash by remember { mutableStateOf(CrashLog.read(this@MainActivity)) }
+        crash?.let { report ->
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { CrashLog.clear(this@MainActivity); crash = null },
+                title = { androidx.compose.material3.Text("The app closed unexpectedly") },
+                text = {
+                    androidx.compose.foundation.layout.Column {
+                        androidx.compose.material3.Text("Sorry! Please send this report (WhatsApp or email) so it can be fixed. It contains only the error, no scans.")
+                        androidx.compose.material3.Text(
+                            report.take(600),
+                            style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(top = 8.dp),
+                        )
+                    }
+                },
+                confirmButton = {
+                    androidx.compose.material3.TextButton(onClick = {
+                        runCatching { Exporter.shareText(this@MainActivity, report) }
+                        CrashLog.clear(this@MainActivity)
+                        crash = null
+                    }) { androidx.compose.material3.Text("Send report") }
+                },
+                dismissButton = {
+                    androidx.compose.material3.TextButton(onClick = { CrashLog.clear(this@MainActivity); crash = null }) {
+                        androidx.compose.material3.Text("Close")
+                    }
+                },
+            )
+        }
     }
 
     @Composable
