@@ -1,5 +1,7 @@
 package com.vigyan.scanner.ui
 
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -223,7 +225,7 @@ fun AppLockScreen(onBack: () -> Unit, say: (String) -> Unit) {
                         Switch(checked = fingerprint && canFinger, enabled = canFinger, onCheckedChange = { fingerprint = it; lock.fingerprint = it })
                     }
                     Text("Lock again after the app is left for", style = MaterialTheme.typography.titleSmall)
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
                         listOf(0 to "Right away", 30 to "30 s", 60 to "1 min", 300 to "5 min").forEach { (s, label) ->
                             FilterChip(selected = timeout == s, onClick = { timeout = s; lock.timeoutSeconds = s }, label = { Text(label) })
                         }

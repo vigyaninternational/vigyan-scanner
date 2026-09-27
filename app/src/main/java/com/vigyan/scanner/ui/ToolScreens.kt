@@ -59,6 +59,9 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.remember
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.unit.sp
 import com.vigyan.scanner.Cutout
 import com.vigyan.scanner.Passport
 import com.vigyan.scanner.PhotoSheet
@@ -444,7 +447,7 @@ fun CutoutScreen(vm: ScanViewModel, onBack: () -> Unit, onBranding: () -> Unit) 
         Text("Ink darkness", style = MaterialTheme.typography.titleSmall)
         Slider(value = darkness, onValueChange = { darkness = it }, onValueChangeFinished = { vm.makeCutout(look.copy(darkness = darkness)) })
         Text("Ink colour", style = MaterialTheme.typography.titleSmall)
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
             Cutout.Ink.values().forEach { i ->
                 FilterChip(selected = look.ink == i, onClick = { vm.makeCutout(look.copy(ink = i)) }, label = { Text(i.label) })
             }
@@ -583,5 +586,119 @@ fun BrandingScreen(vm: ScanViewModel, onBack: () -> Unit, onScanCutout: () -> Un
             "Tip: sign (or stamp) on clean white paper, scan it, then on the next screen tap \"Use as principal's signature\" or \"Use as college seal\".",
             style = MaterialTheme.typography.bodySmall,
         )
+    }
+}
+
+// ---------------- Batch passport photos ----------------
+
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+fun PassportBatchScreen(vm: ScanViewModel, onBack: () -> Unit) {
+    val photos by vm.batch.collectAsStateWithLifecycle()
+    val look by vm.batchLook.collectAsStateWithLifecycle()
+    var zoom by remember(look.zoom) { mutableFloatStateOf(look.zoom) }
+    var paper by rememberSaveable { mutableStateOf(ScanViewModel.BatchPaper.A4) }
+    var copies by rememberSaveable { mutableStateOf(1) }
+    var margin by rememberSaveable { mutableStateOf("5") }
+    var gap by rememberSaveable { mutableStateOf("2") }
+    val picker = rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.GetMultipleContents()) { uris ->
+        if (uris.isNotEmpty()) vm.addToBatch(uris)
+    }
+    val setup = ScanViewModel.SheetSetup(margin = margin.toFloatOrNull() ?: 5f, gap = gap.toFloatOrNull() ?: 2f)
+    val layout = vm.batchLayout(paper, setup)
+    val total = photos.size * copies
+    val sheets = if (layout.count > 0) (total + layout.count - 1) / layout.count else 0
+
+    ToolScaffold("Batch passport photos", onBack, "batch") {
+        Text(
+            "${photos.size} photo(s). Each is cropped around the face with the same size and background. " +
+                "A red border means no clear face was found: check it, or ✕ to remove it.",
+            style = MaterialTheme.typography.bodySmall,
+        )
+        androidx.compose.foundation.layout.FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            photos.forEachIndexed { i, p ->
+                Box {
+                    Image(
+                        p.photo.asImageBitmap(), "Photo ${i + 1}",
+                        modifier = Modifier.width(64.dp).height((64f * p.photo.height / p.photo.width).dp)
+                            .border(if (p.faceFound) 1.dp else 3.dp, if (p.faceFound) Color.LightGray else Color.Red),
+                    )
+                    Box(
+                        Modifier.align(Alignment.TopEnd).size(20.dp).background(Color(0xCCC62828)).clickable { vm.removeFromBatch(i) },
+                        contentAlignment = Alignment.Center,
+                    ) { Text("✕", color = Color.White, fontSize = 11.sp) }
+                    Text(
+                        "${i + 1}", color = Color.White, fontSize = 10.sp,
+                        modifier = Modifier.align(Alignment.BottomStart).background(Color(0x99000000)).padding(horizontal = 3.dp),
+                    )
+                }
+            }
+        }
+        OutlinedButton(onClick = { picker.launch("image/*") }, modifier = Modifier.fillMaxWidth()) {
+            Text("+ Add more photos (up to ${vm.batchLimit})")
+        }
+
+        Text("Size", style = MaterialTheme.typography.titleSmall)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+            PhotoSize.PRESETS.forEach { s ->
+                FilterChip(selected = look.size == s, onClick = { vm.makeBatch(look.copy(size = s)) }, label = { Text(s.label) })
+            }
+        }
+        Text("Face size", style = MaterialTheme.typography.titleSmall)
+        Slider(value = zoom, onValueChange = { zoom = it }, valueRange = 0.75f..1.3f, onValueChangeFinished = { vm.makeBatch(look.copy(zoom = zoom)) })
+        Text("Background", style = MaterialTheme.typography.titleSmall)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+            Passport.BACKGROUNDS.forEach { (label, color) ->
+                FilterChip(selected = look.background == color, onClick = { vm.makeBatch(look.copy(background = color)) }, label = { Text(label) })
+            }
+        }
+        Text("Changing size, face size or background makes all the photos again.", style = MaterialTheme.typography.bodySmall)
+
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Print sheets", style = MaterialTheme.typography.titleMedium)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                    ScanViewModel.BatchPaper.values().forEach { pp ->
+                        FilterChip(selected = paper == pp, onClick = { paper = pp }, label = { Text(pp.label) })
+                    }
+                }
+                Text("Copies of each photo", style = MaterialTheme.typography.titleSmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                    listOf(1, 2, 4, 6, 8).forEach { c ->
+                        FilterChip(selected = copies == c, onClick = { copies = c }, label = { Text("$c") })
+                    }
+                }
+                if (paper == ScanViewModel.BatchPaper.A4) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        SmallNumber("Margin mm", margin, Modifier.weight(1f)) { margin = it }
+                        SmallNumber("Gap mm", gap, Modifier.weight(1f)) { gap = it }
+                    }
+                }
+                Text(
+                    "${photos.size} photo(s) × $copies = $total · ${layout.count} per sheet (${layout.cols} × ${layout.rows}) → $sheets sheet(s)",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Text("Print at 100% (actual size), not \"fit to page\".", style = MaterialTheme.typography.bodySmall)
+                SendButtons(enabled = photos.isNotEmpty() && layout.count > 0, onDenied = { vm.say("Storage permission is needed to save to the phone") }) { target ->
+                    vm.exportBatch(paper, copies, setup, target)
+                }
+                OutlinedButton(
+                    onClick = { vm.exportBatch(paper, copies, setup, ScanViewModel.Target.PRINT) },
+                    enabled = photos.isNotEmpty() && layout.count > 0,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("🖨 Print") }
+            }
+        }
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp)) {
+                Text("Or each photo as its own JPG", style = MaterialTheme.typography.titleMedium)
+                SendButtons(enabled = photos.isNotEmpty(), onDenied = { vm.say("Storage permission is needed to save to the phone") }) { target ->
+                    vm.exportBatchPhotos(target)
+                }
+            }
+        }
     }
 }

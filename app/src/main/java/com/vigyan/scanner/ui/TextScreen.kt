@@ -1,5 +1,6 @@
 package com.vigyan.scanner.ui
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -87,7 +88,7 @@ fun TextScreen(vm: ScanViewModel, scan: Scan, onBack: () -> Unit) {
                 FilledTonalButton(onClick = { Exporter.shareText(context, text) }, modifier = Modifier.weight(1f)) { Text("Send") }
             }
             Text("Save as a file", style = MaterialTheme.typography.titleMedium)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
                 FilterChip(selected = !excel, onClick = { excel = false }, label = { Text("Text (.txt)") })
                 FilterChip(selected = excel, onClick = { excel = true }, label = { Text("Excel table (.xlsx)") })
             }

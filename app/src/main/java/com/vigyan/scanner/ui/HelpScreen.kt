@@ -202,6 +202,23 @@ val HelpTopics = listOf(
         listOf("Print the sheets at 100% / actual size, not \"fit to page\", so the photos come out at the right size.", "Best photo: face the camera, even light, plain wall behind."),
     ),
     HelpTopic(
+        "batch", "📚", "Batch passport photos (a whole class)",
+        "Make passport photos for many students at once, e.g. 40, and print them together.",
+        listOf(
+            "Tap the 🧑 Passport photo card, then 📚 Many photos at once.",
+            "Pick all the photos in the gallery (press and hold the first one, then tap the others). Up to 100.",
+            "Each photo is cropped around the face with the same size and background. The number on each photo is its order.",
+            "A red border means no clear face was found: retake that photo, or tap ✕ to remove it.",
+            "Change the size, face size or background: all photos are made again.",
+            "Print sheets: A4 (up to 30 photos of 35×45 mm per sheet) or 6×4 inch photo paper (8 per sheet). Choose copies of each photo (1, 2, 4…).",
+            "Save, share or 🖨 Print the PDF. Or save each photo as its own JPG.",
+        ),
+        listOf(
+            "Print at 100% (actual size), not \"fit to page\".",
+            "Photos taken against a plain wall in good light come out best. For one special photo (name strip, crop by hand) use the single passport photo studio.",
+        ),
+    ),
+    HelpTopic(
         "signature", "✍️", "Signature studio",
         "Cuts a signature or stamp out of white paper, with a see-through background.",
         listOf(

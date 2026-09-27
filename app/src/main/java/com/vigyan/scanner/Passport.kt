@@ -178,6 +178,27 @@ object Passport {
         return sheet
     }
 
+    /**
+     * Many photos on sheets of [pageWmm]×[pageHmm] (A4 or 6×4 inch), [layout] per sheet, as one
+     * PDF with as many pages as needed. The same photo repeated (copies) is stored once per page.
+     */
+    fun sheetsPdf(photos: List<Bitmap>, pageWmm: Float, pageHmm: Float, layout: PhotoSheet.Layout): ByteArray {
+        if (layout.count == 0) error("No photo fits: make the margin or gap smaller")
+        val k = 72f / 25.4f // points per mm
+        val images = java.util.IdentityHashMap<Bitmap, PdfWriter.Image>()
+        val pages = photos.chunked(layout.count).map { chunk ->
+            val placements = chunk.mapIndexed { j, p ->
+                val (x, y) = layout.positions[j]
+                val image = images.getOrPut(p) { withBorder(p).let { b -> Images.encode(b, 92).also { b.recycle() } } }
+                PdfWriter.Placement(image, x * k, y * k, layout.photoW * k, layout.photoH * k)
+            }
+            PdfWriter.Page(pageWmm * k, pageHmm * k, placements)
+        }
+        val out = ByteArrayOutputStream()
+        PdfWriter().write(pages, out)
+        return out.toByteArray()
+    }
+
     /** A4 PDF with the photo at its real size, laid out by [layout] (millimetres). */
     fun a4Sheet(photo: Bitmap, layout: PhotoSheet.Layout): ByteArray {
         val image = Images.encode(withBorder(photo), 92)

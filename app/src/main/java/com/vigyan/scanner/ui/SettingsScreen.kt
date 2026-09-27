@@ -80,7 +80,7 @@ fun SettingsScreen(vm: ScanViewModel, onBack: () -> Unit, onNavigate: (String) -
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Section("Look") {
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
                     listOf("system" to "Phone setting", "light" to "Light", "dark" to "Dark").forEach { (key, label) ->
                         FilterChip(selected = s.theme == key, onClick = { vm.updateSettings { it.copy(theme = key) } }, label = { Text(label) })
                     }
@@ -89,7 +89,7 @@ fun SettingsScreen(vm: ScanViewModel, onBack: () -> Unit, onNavigate: (String) -
 
             Section("Saving") {
                 Text("Size chosen first", style = MaterialTheme.typography.titleSmall)
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
                     Quality.values().forEach { q ->
                         FilterChip(selected = s.quality == q, onClick = { vm.updateSettings { it.copy(quality = q) } }, label = { Text(q.label) })
                     }
@@ -165,7 +165,7 @@ fun SettingsScreen(vm: ScanViewModel, onBack: () -> Unit, onNavigate: (String) -
 
             Section("Backup, updates & security") {
                 Text("Remind me to back up", style = MaterialTheme.typography.titleSmall)
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
                     listOf(0 to "Never", 7 to "Every week", 30 to "Every month").forEach { (days, label) ->
                         FilterChip(selected = s.backupDays == days, onClick = { vm.updateSettings { it.copy(backupDays = days) } }, label = { Text(label) })
                     }

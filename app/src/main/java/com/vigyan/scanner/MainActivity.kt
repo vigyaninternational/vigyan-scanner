@@ -343,6 +343,7 @@ class MainActivity : FragmentActivity() {
             composable("backup") { BackupScreen(vm, onBack = { nav.popBackStack() }) }
             composable("applock") { AppLockScreen(onBack = { nav.popBackStack() }, say = vm::say) }
             composable("passport") { PassportScreen(vm, onBack = { nav.popBackStack() }) }
+            composable("passportbatch") { com.vigyan.scanner.ui.PassportBatchScreen(vm, onBack = { nav.popBackStack() }) }
             composable("cutout") {
                 CutoutScreen(vm, onBack = { nav.popBackStack() }, onBranding = { nav.navigate("branding") })
             }

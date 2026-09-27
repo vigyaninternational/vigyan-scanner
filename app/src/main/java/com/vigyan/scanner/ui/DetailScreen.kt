@@ -281,7 +281,7 @@ fun DetailScreen(
                     CheckRow("Text file (.txt)", txt) { txt = it }
 
                     Text("Size", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
                         Quality.values().forEach { q ->
                             FilterChip(selected = quality == q, onClick = { quality = q }, label = { Text(q.label) })
                         }
@@ -290,7 +290,7 @@ fun DetailScreen(
 
                     if (scan.pages.size > 1) {
                         Text("Pages", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
                             FilterChip(selected = !somePages, onClick = { somePages = false }, label = { Text("All ${scan.pages.size}") })
                             FilterChip(selected = somePages, onClick = { somePages = true }, label = { Text("Only some") })
                         }
@@ -759,12 +759,12 @@ private fun IdSheetDialog(vm: ScanViewModel, scan: Scan, onDismiss: () -> Unit) 
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Text("Paper", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
                     FilterChip(selected = landscape, onClick = { landscape = true }, label = { Text("A4 landscape (sideways)") })
                     FilterChip(selected = !landscape, onClick = { landscape = false }, label = { Text("A4 portrait") })
                 }
                 Text("Card size", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
                     FilterChip(selected = !large, onClick = { large = false }, label = { Text("Real size (like a photocopy)") })
                     FilterChip(selected = large, onClick = { large = true }, label = { Text("Bigger (1.5×)") })
                 }

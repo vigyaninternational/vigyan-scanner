@@ -802,6 +802,103 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // ---- Batch passport photos (a whole class at once) ----
+
+    class BatchPhoto(val photo: android.graphics.Bitmap, val faceFound: Boolean)
+
+    private var batchUris: List<Uri> = emptyList()
+    private val _batch = MutableStateFlow<List<BatchPhoto>>(emptyList())
+    val batch: StateFlow<List<BatchPhoto>> = _batch
+    private val _batchLook = MutableStateFlow(PassportLook())
+    val batchLook: StateFlow<PassportLook> = _batchLook
+
+    /** Most photos in one batch (memory: each finished photo is about 1 MB). */
+    val batchLimit = 100
+
+    fun startBatch(uris: List<Uri>, then: () -> Unit) {
+        batchUris = uris.distinct().take(batchLimit)
+        _batch.value = emptyList()
+        if (uris.size > batchLimit) _message.value = "Only the first $batchLimit photos are used"
+        then()
+        makeBatch()
+    }
+
+    fun addToBatch(uris: List<Uri>) {
+        batchUris = (batchUris + uris).distinct().take(batchLimit)
+        makeBatch()
+    }
+
+    fun removeFromBatch(index: Int) {
+        if (index !in batchUris.indices) return
+        batchUris = batchUris.filterIndexed { i, _ -> i != index }
+        _batch.value = _batch.value.filterIndexed { i, _ -> i != index }
+    }
+
+    /** Crops every photo around its face with the same size, background and look. */
+    fun makeBatch(look: PassportLook = _batchLook.value) = work("Making the photos…") {
+        _batchLook.value = look.copy(label = false, cropW = -1f)
+        val l = _batchLook.value
+        val out = mutableListOf<BatchPhoto>()
+        val kept = mutableListOf<Uri>()
+        var failed = 0
+        batchUris.forEachIndexed { i, uri ->
+            _busy.value = "Making photo ${i + 1} of ${batchUris.size}…"
+            try {
+                val src = io { Images.decodeUri(ctx, uri, 1600) }
+                val cut = Passport.cut(src, l.size, l.zoom, l.shiftX, l.shiftY)
+                val photo = withContext(Dispatchers.Default) { finishPassport(cut, l) }
+                if (photo !== cut.photo) cut.photo.recycle()
+                if (src !== cut.photo) src.recycle()
+                out += BatchPhoto(photo, cut.faceFound)
+                kept += uri
+            } catch (e: Exception) {
+                failed++
+            }
+        }
+        batchUris = kept
+        _batch.value = out
+        val noFace = out.count { !it.faceFound }
+        _message.value = "${out.size} photo(s) ready" +
+            (if (noFace > 0) ". $noFace without a clear face (red border): check or remove them" else "") +
+            (if (failed > 0) ". $failed could not be opened" else "")
+    }
+
+    enum class BatchPaper(val label: String) { A4("A4 sheets"), SIX_BY_FOUR("6×4 inch photo paper") }
+
+    fun batchLayout(paper: BatchPaper, setup: SheetSetup): PhotoSheet.Layout {
+        val size = _batchLook.value.size
+        return when (paper) {
+            BatchPaper.A4 -> PhotoSheet.layout(PhotoSheet.A4_W, PhotoSheet.A4_H, size.widthMm, size.heightMm, setup.margin, setup.gap, setup.cols, setup.rows)
+            BatchPaper.SIX_BY_FOUR -> PhotoSheet.layout(PhotoSheet.SIX_W, PhotoSheet.FOUR_H, size.widthMm, size.heightMm, 3f, 2f)
+        }
+    }
+
+    /** All the photos ([copies] of each, side by side) on as many sheets as needed, as one PDF. */
+    fun exportBatch(paper: BatchPaper, copies: Int, setup: SheetSetup, target: Target) = send(target, "Making the sheets…") {
+        val photos = _batch.value.map { it.photo }
+        if (photos.isEmpty()) error("Add photos first")
+        val all = photos.flatMap { p -> List(copies.coerceIn(1, 30)) { p } }
+        val layout = batchLayout(paper, setup)
+        val (w, h) = if (paper == BatchPaper.A4) PhotoSheet.A4_W to PhotoSheet.A4_H else PhotoSheet.SIX_W to PhotoSheet.FOUR_H
+        val size = _batchLook.value.size
+        val dir = File(ctx.cacheDir, "export").apply { deleteRecursively(); mkdirs() }
+        val name = "Passport photos ${photos.size} x$copies ${size.widthMm.toInt()}x${size.heightMm.toInt()} " +
+            (if (paper == BatchPaper.A4) "A4" else "6x4") + " ${stamp()}.pdf"
+        listOf(io { File(dir, name).apply { writeBytes(Passport.sheetsPdf(all, w, h, layout)) } })
+    }
+
+    /** Every photo as its own JPG (Photo 01.jpg, Photo 02.jpg…). */
+    fun exportBatchPhotos(target: Target) = send(target, "Saving the photos…") {
+        val photos = _batch.value.map { it.photo }
+        if (photos.isEmpty()) error("Add photos first")
+        val dir = File(ctx.cacheDir, "export").apply { deleteRecursively(); mkdirs() }
+        io {
+            photos.mapIndexed { i, p ->
+                File(dir, "Photo %02d.jpg".format(i + 1)).apply { writeBytes(Images.encode(p, 95).jpeg) }
+            }
+        }
+    }
+
     // ---- Signature studio ----
 
     private var cutoutSource: android.graphics.Bitmap? = null

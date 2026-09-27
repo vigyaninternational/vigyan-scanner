@@ -1,5 +1,6 @@
 package com.vigyan.scanner.ui
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.draw.alpha
@@ -73,6 +74,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import com.vigyan.scanner.BuildConfig
@@ -153,6 +156,10 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit, onNavigate: 
         val uri = cameraUri
         if (ok && uri != null) runCatching { camera.launch(uri) }.onFailure { vm.say("Camera not available") }
         else if (!ok) vm.say("Allow the camera to take a photo")
+    }
+    // Batch passport photos: many photos from the gallery at once.
+    val batchPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
+        if (uris.isNotEmpty()) vm.startBatch(uris) { onNavigate("passportbatch") }
     }
     val gallery = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) vm.passportFromUri(uri) { onNavigate("passport") }
@@ -406,37 +413,37 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit, onNavigate: 
                     ) { personName = ""; personRef = ""; dialog = "person" }
                 }
                 item {
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        ActionCard("Scan document", "PDF or JPG", "📄", CardBlue, Modifier.weight(1f)) { scan(ScanMode.DOCUMENT) }
-                        ActionCard("Scan to text", "OCR: read, edit, copy", "🔤", CardTeal, Modifier.weight(1f)) { scan(ScanMode.TEXT) }
+                    Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        ActionCard("Scan document", "PDF or JPG", "📄", CardBlue, Modifier.weight(1f).fillMaxHeight()) { scan(ScanMode.DOCUMENT) }
+                        ActionCard("Scan to text", "OCR: read, edit, copy", "🔤", CardTeal, Modifier.weight(1f).fillMaxHeight()) { scan(ScanMode.TEXT) }
                     }
                 }
                 item {
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        ActionCard("Scan & fill a form", "Form, Aadhaar, ID card", "📝", CardPurple, Modifier.weight(1f)) { scan(ScanMode.FILL) }
-                        ActionCard("Batch fill forms", "Many forms → one sheet", "🗂️", CardIndigo, Modifier.weight(1f)) { dialog = "batch" }
+                    Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        ActionCard("Scan & fill a form", "Form, Aadhaar, ID card", "📝", CardPurple, Modifier.weight(1f).fillMaxHeight()) { scan(ScanMode.FILL) }
+                        ActionCard("Batch fill forms", "Many forms → one sheet", "🗂️", CardIndigo, Modifier.weight(1f).fillMaxHeight()) { dialog = "batch" }
                     }
                 }
                 item {
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        ActionCard("Passport photo", "Face crop, white background", "🧑", CardPink, Modifier.weight(1f)) { dialog = "passport" }
-                        ActionCard("Signature cut-out", "See-through signature / seal", "✍️", CardOrange, Modifier.weight(1f)) { signatureScanner(1) }
+                    Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        ActionCard("Passport photo", "One photo, or a whole class", "🧑", CardPink, Modifier.weight(1f).fillMaxHeight()) { dialog = "passport" }
+                        ActionCard("Signature cut-out", "See-through signature / seal", "✍️", CardOrange, Modifier.weight(1f).fillMaxHeight()) { signatureScanner(1) }
                     }
                 }
                 item {
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        ActionCard("Resize for portal", "Photo / PDF under X KB", "📐", CardGreen, Modifier.weight(1f)) {
+                    Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        ActionCard("Resize for portal", "Photo / PDF under X KB", "📐", CardGreen, Modifier.weight(1f).fillMaxHeight()) {
                             resizePicker.launch(arrayOf("image/*", "application/pdf"))
                         }
-                        ActionCard("Open photo / PDF", "From WhatsApp, gallery, files", "📂", CardAmber, Modifier.weight(1f)) {
+                        ActionCard("Open photo / PDF", "From WhatsApp, gallery, files", "📂", CardAmber, Modifier.weight(1f).fillMaxHeight()) {
                             importPicker.launch(arrayOf("image/*", "application/pdf"))
                         }
                     }
                 }
                 item {
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        ActionCard("ID cards on A4", "Aadhaar, PAN… real size, sideways A4", "🪪", CardTeal, Modifier.weight(1f)) { idScanner(20) }
-                        ActionCard("Compress PDF", "Make a PDF smaller (KB / MB)", "🗜", CardIndigo, Modifier.weight(1f)) {
+                    Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        ActionCard("ID cards on A4", "Aadhaar, PAN… real size on A4", "🪪", CardTeal, Modifier.weight(1f).fillMaxHeight()) { idScanner(20) }
+                        ActionCard("Compress PDF", "Make a PDF smaller (KB / MB)", "🗜", CardIndigo, Modifier.weight(1f).fillMaxHeight()) {
                             compressPicker.launch(arrayOf("application/pdf"))
                         }
                     }
@@ -465,7 +472,7 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit, onNavigate: 
                 }
             }
             if (!showTrash) item {
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
                     item { FilterChip(selected = folder == null && !favoritesOnly, onClick = { vm.showFolder(null); favoritesOnly = false }, label = { Text("All (${scans.size})") }) }
                     item {
                         FilterChip(
@@ -751,6 +758,10 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit, onNavigate: 
                     OutlinedButton(onClick = { dialog = ""; gallery.launch("image/*") }, modifier = Modifier.fillMaxWidth()) {
                         Text("Choose from gallery")
                     }
+                    Button(onClick = { dialog = ""; batchPicker.launch("image/*") }, modifier = Modifier.fillMaxWidth()) {
+                        Text("📚 Many photos at once (a whole class)")
+                    }
+                    Text("Pick up to 100 photos: each is cropped the same way, then printed on A4 or 6×4 sheets.", style = MaterialTheme.typography.bodySmall)
                 }
             },
             confirmButton = { TextButton(onClick = { dialog = "" }) { Text("Cancel") } },
@@ -804,26 +815,28 @@ private fun ChoiceRow(label: String, selected: Boolean, onClick: () -> Unit) {
 private fun ActionCard(title: String, subtitle: String, icon: String, colors: List<Color>, modifier: Modifier, onClick: () -> Unit) {
     Card(
         onClick = onClick,
-        modifier = modifier.height(112.dp),
+        // Grows with its text (large phone font sizes), never shorter than 112 dp.
+        modifier = modifier.heightIn(min = 112.dp),
         shape = RoundedCornerShape(20.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp, pressedElevation = 1.dp),
         colors = CardDefaults.cardColors(containerColor = Color.Transparent),
     ) {
-        Box(Modifier.fillMaxSize().background(Brush.linearGradient(colors))) {
-            // A big faded copy of the icon in the corner, for decoration.
+        Box(Modifier.fillMaxSize().heightIn(min = 112.dp).background(Brush.linearGradient(colors))) {
+            // A faded copy of the icon in the corner, for decoration (kept clear of the text).
             Text(
                 icon,
-                fontSize = 64.sp,
-                modifier = Modifier.align(Alignment.BottomEnd).offset(x = 12.dp, y = 14.dp).alpha(0.22f),
+                fontSize = 48.sp,
+                modifier = Modifier.align(Alignment.BottomEnd).offset(x = 8.dp, y = 10.dp).alpha(0.16f),
             )
-            Column(Modifier.padding(12.dp)) {
+            Column(Modifier.padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 22.dp)) {
                 Box(
                     Modifier.size(36.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.25f)),
                     contentAlignment = Alignment.Center,
                 ) { Text(icon, fontSize = 18.sp) }
                 Spacer(Modifier.height(6.dp))
-                Text(title, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(subtitle, color = Color.White.copy(alpha = 0.9f), fontSize = 12.sp, lineHeight = 14.sp, maxLines = 2)
+                Text(title, color = Color.White, fontSize = 15.sp, lineHeight = 18.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.height(2.dp))
+                Text(subtitle, color = Color.White.copy(alpha = 0.9f), fontSize = 12.sp, lineHeight = 15.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
             }
         }
     }
