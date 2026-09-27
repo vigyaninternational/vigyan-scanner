@@ -136,7 +136,7 @@ object Passport {
         c.drawColor(Color.WHITE)
         val photoH = (height * (1 - STRIP)).toInt()
         c.drawBitmap(photo, null, RectF(0f, 0f, width.toFloat(), photoH.toFloat()), Paint(Paint.FILTER_BITMAP_FLAG))
-        val lines = listOf(name.trim().uppercase(), date.trim()).filter { it.isNotEmpty() }
+        val lines = listOf(name.trim(), date.trim()).filter { it.isNotEmpty() }
         if (lines.isEmpty()) return out
         val stripH = height - photoH
         val pad = width * 0.04f

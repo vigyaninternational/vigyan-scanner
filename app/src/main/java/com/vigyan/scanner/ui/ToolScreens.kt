@@ -188,12 +188,12 @@ fun PassportScreen(vm: ScanViewModel, onBack: () -> Unit) {
                         checked = look.label,
                         onCheckedChange = { on -> vm.restylePassport(look.copy(label = on, labelName = labelName, labelDate = labelDate)) },
                     )
-                    Text("Name and date at the bottom of the photo", style = MaterialTheme.typography.titleSmall)
+                    Text("Text at the bottom of the photo (name, date…)", style = MaterialTheme.typography.titleSmall)
                 }
-                Text("Some portals (SSC, UPSC, banks…) want the name and the date the photo was taken printed below the face.", style = MaterialTheme.typography.bodySmall)
+                Text("Some portals (SSC, UPSC, banks…) want the name and the date printed below the face. Type exactly what you want in the two lines; either can be left empty.", style = MaterialTheme.typography.bodySmall)
                 if (look.label) {
-                    OutlinedTextField(labelName, { labelName = it }, singleLine = true, label = { Text("Name") }, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(labelDate, { labelDate = it }, singleLine = true, label = { Text("Date (dd/mm/yyyy)") }, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(labelName, { labelName = it }, singleLine = true, label = { Text("Line 1 (bold), e.g. RAHUL KUMAR") }, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(labelDate, { labelDate = it }, singleLine = true, label = { Text("Line 2, e.g. 27.09.2026 or anything") }, modifier = Modifier.fillMaxWidth())
                     Button(onClick = { vm.restylePassport(look.copy(labelName = labelName, labelDate = labelDate)) }, modifier = Modifier.fillMaxWidth()) {
                         Text("Put on the photo")
                     }

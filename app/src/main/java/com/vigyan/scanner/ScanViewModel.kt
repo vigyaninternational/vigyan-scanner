@@ -668,7 +668,7 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
         /** Name and date printed in a white strip at the bottom (some portals ask for it). */
         val label: Boolean = false,
         val labelName: String = "",
-        val labelDate: String = SimpleDateFormat("dd/MM/yyyy", Locale.US).format(Date()),
+        val labelDate: String = "",
     ) {
         val manual get() = cropW > 0f
 

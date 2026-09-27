@@ -196,7 +196,7 @@ val HelpTopics = listOf(
             "The app finds the face and crops around it. Adjust the face size and move it with ← → ↑ ↓, or use ✂ Crop by hand and drag the frame yourself.",
             "⟲ ⟳ turn a sideways photo.",
             "Background: white, light blue, blue, red, grey or the original. Adjust brightness and contrast.",
-            "Name and date at the bottom: tick it, type the name and date, and tap Put on the photo (for SSC, UPSC and other portals).",
+            "Text at the bottom: tick it, type any two lines (name, date in any format, class…), and tap Put on the photo (for SSC, UPSC and other portals).",
             "Get it as: JPG, PNG, under a KB limit, a 6×4 print sheet, or an A4 sheet (choose margin, gap, rows and columns).",
         ),
         listOf("Print the sheets at 100% / actual size, not \"fit to page\", so the photos come out at the right size.", "Best photo: face the camera, even light, plain wall behind."),
