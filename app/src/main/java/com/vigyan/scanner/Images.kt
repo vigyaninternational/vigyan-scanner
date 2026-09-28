@@ -214,6 +214,14 @@ object Images {
         val bitmap = context.contentResolver.openInputStream(uri)?.use {
             BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample })
         } ?: error("Could not open the image")
-        return fit(bitmap, maxSide)
+        // Older Android does not turn the photo upright by itself: read the camera's rotation.
+        val degrees = runCatching {
+            context.contentResolver.openInputStream(uri)?.use { androidx.exifinterface.media.ExifInterface(it).rotationDegrees } ?: 0
+        }.getOrDefault(0)
+        val upright = if (degrees == 0) bitmap else {
+            Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, Matrix().apply { postRotate(degrees.toFloat()) }, true)
+                .also { if (it !== bitmap) bitmap.recycle() }
+        }
+        return fit(upright, maxSide)
     }
 }

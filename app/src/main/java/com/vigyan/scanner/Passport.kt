@@ -79,7 +79,41 @@ object Passport {
         return Cut(photo, runCatching { personMask(photo) }.getOrNull(), face != null)
     }
 
+    /**
+     * How sure we are that each pixel is the person. The selfie model knows only people, so trees,
+     * leaves or a busy room behind are background; the general "subject" model (which can keep a
+     * plant as a subject) is only the fallback.
+     */
     private suspend fun personMask(photo: Bitmap): FloatArray? {
+        val raw = runCatching { selfieMask(photo) }.getOrNull() ?: subjectMask(photo) ?: return null
+        // Firm up the edge so faint leaf shadows go and the person stays solid.
+        for (i in raw.indices) {
+            val t = ((raw[i] - 0.3f) / 0.4f).coerceIn(0f, 1f)
+            raw[i] = t * t * (3 - 2 * t)
+        }
+        return raw
+    }
+
+    private suspend fun selfieMask(photo: Bitmap): FloatArray? {
+        val segmenter = com.google.mlkit.vision.segmentation.Segmentation.getClient(
+            com.google.mlkit.vision.segmentation.selfie.SelfieSegmenterOptions.Builder()
+                .setDetectorMode(com.google.mlkit.vision.segmentation.selfie.SelfieSegmenterOptions.SINGLE_IMAGE_MODE)
+                .build(),
+        )
+        val mask = try {
+            segmenter.process(InputImage.fromBitmap(photo, 0)).await()
+        } finally {
+            segmenter.close()
+        }
+        if (mask.width != photo.width || mask.height != photo.height) return null
+        val buf = mask.buffer
+        buf.rewind()
+        val n = photo.width * photo.height
+        if (buf.remaining() < n * 4) return null
+        return FloatArray(n) { buf.float.coerceIn(0f, 1f) }
+    }
+
+    private suspend fun subjectMask(photo: Bitmap): FloatArray? {
         val segmenter = SubjectSegmentation.getClient(
             SubjectSegmenterOptions.Builder().enableForegroundConfidenceMask().build(),
         )

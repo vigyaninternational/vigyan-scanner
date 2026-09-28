@@ -89,6 +89,10 @@ dependencies {
     // Passport photo: face position, and the person vs background (for a white background).
     implementation("com.google.android.gms:play-services-mlkit-face-detection:17.1.0")
     implementation("com.google.android.gms:play-services-mlkit-subject-segmentation:16.0.0-beta1")
+    // Person-only mask (model inside the app): trees, leaves and furniture behind are never kept.
+    implementation("com.google.mlkit:segmentation-selfie:16.0.0-beta6")
+    // Photo rotation (EXIF) on Android 8 and older.
+    implementation("androidx.exifinterface:exifinterface:1.3.7")
     // Odia text reading (Tesseract). The Odia + English data (about 5.5 MB) downloads on first use.
     implementation("com.github.adaptech-cz.Tesseract4Android:tesseract4android:4.8.0")
     // Fingerprint unlock for the app lock (needs a FragmentActivity).
