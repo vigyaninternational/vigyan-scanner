@@ -9,6 +9,7 @@ import java.io.File
 
 /** Page looks, like the filters in a scanner app. */
 enum class PageFilter(val label: String, val hint: String) {
+    CLEAR("🪄 Clear & bright", "Fixes dull, faded pages: white paper, deep text, true colours, sharper"),
     ENHANCE("✨ Brighten", "Whiter paper, darker text, colours kept"),
     SHADOW("🌗 Remove shadows", "Evens out shadows and uneven light, colours kept"),
     GRAY("⚪ Grayscale", "Grey, smaller file"),
@@ -19,11 +20,44 @@ enum class PageFilter(val label: String, val hint: String) {
 object Filters {
 
     fun apply(src: Bitmap, filter: PageFilter): Bitmap = when (filter) {
+        PageFilter.CLEAR -> clear(src)
         PageFilter.ENHANCE -> enhance(src)
         PageFilter.GRAY -> Images.grayscale(src)
         PageFilter.SHADOW -> flatten(src, bw = false)
         PageFilter.BW -> flatten(src, bw = true)
         PageFilter.INK -> inkOnly(src)
+    }
+
+    /**
+     * Dull or faded page → clear page (see FilterMath.clearLevels / clarify). Whole-page levels
+     * only, so photos on ID cards and coloured seals are not washed out.
+     */
+    fun clear(src: Bitmap): Bitmap {
+        val sw = 200
+        val sh = (sw * src.height / src.width).coerceIn(1, 800)
+        val small = Bitmap.createScaledBitmap(src, sw, sh, true)
+        val smallPx = IntArray(sw * sh)
+        small.getPixels(smallPx, 0, sw, 0, 0, sw, sh)
+        if (small !== src) small.recycle()
+        val luts = FilterMath.clearLuts(FilterMath.clearLevels(smallPx))
+
+        val w = src.width
+        val h = src.height
+        val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        // A band of rows at a time, plus one row above and below for the sharpening.
+        val band = 64
+        val buf = IntArray(w * (band + 2))
+        var y = 0
+        while (y < h) {
+            val rows = minOf(band, h - y)
+            val top = maxOf(0, y - 1)
+            val bottom = minOf(h, y + rows + 1)
+            src.getPixels(buf, 0, w, 0, top, w, bottom - top)
+            val res = FilterMath.clarify(buf, w, bottom - top, y - top, rows, luts)
+            out.setPixels(res, 0, w, 0, y, w, rows)
+            y += rows
+        }
+        return out
     }
 
     /** Only dark, uncoloured ink stays (see FilterMath.inkOnly). */

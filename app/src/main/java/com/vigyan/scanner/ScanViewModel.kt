@@ -139,6 +139,7 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
 
     fun saveNewScan(pages: List<Uri>, sort: Boolean = false, name: String? = null, then: (Scan) -> Unit) = work("Saving scan…") {
         val scan = io { repo.create(pages, name = name?.let { uniqueName(it) }, folder = folderForNew) }
+        autoClear(scan, scan.pages.indices)
         reload() // the new scan must be in the list before its screen opens
         then(scan)
         if (sort) autoSortInBackground(scan)
@@ -155,6 +156,7 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
     fun importUris(uris: List<Uri>, sort: Boolean = true, then: (Scan) -> Unit = { _openScan.value = it.id }) = work("Importing…") {
         val files = importFiles(uris)
         val scan = io { repo.createFromFiles(files, "Imported ${stamp()}", folderForNew) }
+        autoClear(scan, scan.pages.indices)
         reload()
         then(scan)
         if (sort) autoSortInBackground(scan)
@@ -226,6 +228,7 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
         } else {
             io { repo.addPages(scan, uris) }
         }
+        autoClear(updated, before until updated.pages.size)
         _message.value = "Added ${updated.pages.size - before} page(s)"
         checkQualityInBackground(updated)
     }
@@ -293,6 +296,27 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ---- Page filters ----
+
+    /**
+     * "Clear & bright" on new pages when it is on in Settings, so dull or faded scans and imports
+     * come out clear. The original stays: ✏ › Restore the original page undoes it.
+     */
+    private suspend fun autoClear(scan: Scan, indices: IntRange) {
+        if (!_settings.value.autoClear || indices.isEmpty()) return
+        val total = indices.count()
+        for (i in indices) {
+            if (total > 1) _busy.value = "Making pages clear: ${i - indices.first + 1} of $total…"
+            io {
+                runCatching {
+                    val src = Images.decode(scan.pages[i], 3000)
+                    val out = Filters.clear(src)
+                    src.recycle()
+                    repo.replacePage(scan, i, out, reshaped = false)
+                    out.recycle()
+                }
+            }
+        }
+    }
 
     fun applyFilter(scan: Scan, indices: List<Int>, filter: PageFilter) = work("${filter.label}…") {
         indices.forEachIndexed { k, i ->

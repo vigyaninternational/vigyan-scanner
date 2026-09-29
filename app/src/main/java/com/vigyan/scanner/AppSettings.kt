@@ -24,6 +24,8 @@ data class AppSettings(
     val quickEnhance: Boolean = true,
     /** Warn about blurry, dark or glaring pages. */
     val qualityWarnings: Boolean = true,
+    /** New scans and imported photos/PDFs are made clear and bright ("Clear & bright" filter). */
+    val autoClear: Boolean = true,
 ) {
     fun save(p: SharedPreferences) {
         p.edit()
@@ -37,6 +39,7 @@ data class AppSettings(
             .putBoolean("set_quick_auto", quickAuto)
             .putBoolean("set_quick_enhance", quickEnhance)
             .putBoolean("set_quality_warnings", qualityWarnings)
+            .putBoolean("set_auto_clear", autoClear)
             .apply()
     }
 
@@ -56,6 +59,7 @@ data class AppSettings(
                 quickAuto = p.getBoolean("set_quick_auto", d.quickAuto),
                 quickEnhance = p.getBoolean("set_quick_enhance", d.quickEnhance),
                 qualityWarnings = p.getBoolean("set_quality_warnings", d.qualityWarnings),
+                autoClear = p.getBoolean("set_auto_clear", d.autoClear),
             )
         }
     }

@@ -17,8 +17,8 @@ import kotlin.math.roundToInt
 /** Image quality for PDFs and JPGs: longest side in pixels and JPEG quality. */
 enum class Quality(val label: String, val hint: String, val maxSide: Int, val jpeg: Int) {
     SMALL("Small", "WhatsApp / email", 1300, 55),
-    NORMAL("Normal", "good for most", 2000, 75),
-    HIGH("High", "best for printing", 4000, 92),
+    NORMAL("Normal", "clear, good for most", 2600, 85),
+    HIGH("High", "best for printing", 4000, 95),
 }
 
 /** Bitmap helpers: resizing, rotating and importing photos/PDFs as page images. */
@@ -166,8 +166,8 @@ object Images {
                         for (i in 0 until pdf.pageCount) {
                             val page = pdf.openPage(i)
                             try {
-                                // About 180 dpi, capped so big pages don't run out of memory.
-                                val scale = minOf(2.5f, 2200f / max(page.width, page.height))
+                                // About 250 dpi on A4 (sharp text), capped so big pages don't run out of memory.
+                                val scale = minOf(4f, 3000f / max(page.width, page.height))
                                 val bitmap = Bitmap.createBitmap((page.width * scale).roundToInt(), (page.height * scale).roundToInt(), Bitmap.Config.ARGB_8888)
                                 bitmap.eraseColor(Color.WHITE)
                                 page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)

@@ -545,3 +545,26 @@ class IdSheetLayoutTest {
         assertEquals(8, Exporter.idLayout(landscape = false, scale = 1f, pairs = true).count)
     }
 }
+
+class ClearFilterTest {
+    private fun rgb(r: Int, g: Int, b: Int) = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+
+    @Test
+    fun dullYellowishPageBecomesWhitePaperAndDarkText() {
+        // A faded photo of a page: greyish-yellow paper (200, 195, 170), washed-out text (110, 105, 95).
+        val px = IntArray(1000) { if (it % 10 == 0) rgb(110, 105, 95) else rgb(200, 195, 170) }
+        val luts = FilterMath.clearLuts(FilterMath.clearLevels(px))
+        val paper = FilterMath.clarify(intArrayOf(rgb(200, 195, 170)), 1, 1, 0, 1, luts, sharpen = 0f)[0]
+        val text = FilterMath.clarify(intArrayOf(rgb(110, 105, 95)), 1, 1, 0, 1, luts, sharpen = 0f)[0]
+        assertTrue("paper is white", (paper shr 16 and 0xFF) >= 250 && (paper shr 8 and 0xFF) >= 250)
+        assertTrue("text is darker than before", (text shr 16 and 0xFF) < 110)
+    }
+
+    @Test
+    fun pinkCertificateKeepsItsColour() {
+        val px = IntArray(1000) { rgb(250, 200, 210) }
+        val levels = FilterMath.clearLevels(px)
+        // Green is far below red, so it is not stretched to white.
+        assertTrue(levels[3] >= 225)
+    }
+}

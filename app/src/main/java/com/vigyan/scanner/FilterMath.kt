@@ -126,4 +126,80 @@ object FilterMath {
     }
 
     private fun scale(v: Int, paper: Float) = (v * 255f / paper.coerceAtLeast(1f)).toInt().coerceIn(0, 255)
+
+    // ---- "Clear & bright": dull, faded scans made clear ----
+
+    /**
+     * Black and white points per channel from a small copy of the page: [rBlack, rWhite, gBlack,
+     * gWhite, bBlack, bWhite]. The white point is the paper (grey or yellowish paper becomes
+     * white); a slight colour cast is corrected, but a truly coloured paper (pink certificate)
+     * keeps its colour. The black point never goes so high that dark photos are crushed.
+     */
+    fun clearLevels(px: IntArray): IntArray {
+        val hist = Array(3) { IntArray(256) }
+        for (p in px) {
+            hist[0][(p shr 16) and 0xFF]++
+            hist[1][(p shr 8) and 0xFF]++
+            hist[2][p and 0xFF]++
+        }
+        fun pct(h: IntArray, q: Double): Int {
+            var c = 0
+            for (i in 0..255) { c += h[i]; if (c >= px.size * q) return i }
+            return 255
+        }
+        val whites = IntArray(3) { pct(hist[it], 0.94) }
+        val top = maxOf(whites[0], whites[1], whites[2])
+        val out = IntArray(6)
+        for (c in 0..2) {
+            // Correct a small tint only (at most 25 levels apart from the brightest channel).
+            val white = maxOf(whites[c], top - 25).coerceIn(90, 255)
+            val black = pct(hist[c], 0.01).coerceAtMost(55).coerceAtMost(white - 60)
+            out[2 * c] = black
+            out[2 * c + 1] = white
+        }
+        return out
+    }
+
+    /** Tone curves per channel: stretch black..white to 0..255, then a gentle curve that deepens faded text. */
+    fun clearLuts(levels: IntArray, gamma: Double = 1.25): Array<IntArray> = Array(3) { c ->
+        val black = levels[2 * c]
+        val white = levels[2 * c + 1]
+        IntArray(256) { v ->
+            val t = ((v - black).toDouble() / (white - black)).coerceIn(0.0, 1.0)
+            (Math.pow(t, gamma) * 255 + 0.5).toInt().coerceIn(0, 255)
+        }
+    }
+
+    /**
+     * Sharpens, applies [luts] and livens colours by [saturation]. [px] holds [n] rows of [w]
+     * pixels; rows [first] until [first] + [rows] are returned (the others are only neighbours).
+     */
+    fun clarify(px: IntArray, w: Int, n: Int, first: Int, rows: Int, luts: Array<IntArray>, sharpen: Float = 0.35f, saturation: Float = 1.2f): IntArray {
+        val out = IntArray(w * rows)
+        val ch = IntArray(3)
+        for (y in first until first + rows) {
+            val up = maxOf(0, y - 1) * w
+            val down = minOf(n - 1, y + 1) * w
+            val row = y * w
+            for (x in 0 until w) {
+                val left = row + maxOf(0, x - 1)
+                val right = row + minOf(w - 1, x + 1)
+                val p = px[row + x]
+                for (c in 0..2) {
+                    val s = 16 - 8 * c
+                    val v = (p shr s) and 0xFF
+                    val around = ((px[up + x] shr s) and 0xFF) + ((px[down + x] shr s) and 0xFF) +
+                        ((px[left] shr s) and 0xFF) + ((px[right] shr s) and 0xFF)
+                    val sharp = (v + sharpen * (4 * v - around)).toInt().coerceIn(0, 255)
+                    ch[c] = luts[c][sharp]
+                }
+                val grey = (ch[0] * 299 + ch[1] * 587 + ch[2] * 114) / 1000f
+                val r = (grey + (ch[0] - grey) * saturation).toInt().coerceIn(0, 255)
+                val g = (grey + (ch[1] - grey) * saturation).toInt().coerceIn(0, 255)
+                val b = (grey + (ch[2] - grey) * saturation).toInt().coerceIn(0, 255)
+                out[(y - first) * w + x] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+            }
+        }
+        return out
+    }
 }

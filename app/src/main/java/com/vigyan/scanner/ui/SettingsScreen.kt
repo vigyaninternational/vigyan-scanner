@@ -148,6 +148,10 @@ fun SettingsScreen(vm: ScanViewModel, onBack: () -> Unit, onNavigate: (String) -
                 TextButton(onClick = { vm.updateSettings { it.copy(docOrder = order) }; vm.say("Saved") }) { Text("Save order") }
             }
 
+            Section("Scan document & imported files") {
+                SwitchRow("Make pages clear & bright automatically (fixes dull, faded scans)", s.autoClear) { v -> vm.updateSettings { it.copy(autoClear = v) } }
+            }
+
             Section("Quick scan") {
                 SwitchRow("Start with Auto capture on", s.quickAuto) { v -> vm.updateSettings { it.copy(quickAuto = v) } }
                 SwitchRow("Start with Enhance (brighten) on", s.quickEnhance) { v -> vm.updateSettings { it.copy(quickEnhance = v) } }
