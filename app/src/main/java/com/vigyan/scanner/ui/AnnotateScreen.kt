@@ -98,6 +98,7 @@ private sealed class Mark {
 private enum class Tool(val label: String) {
     PEN("✏️ Pen"),
     HIGHLIGHT("🖍 Highlight"),
+    ERASE("🧽 Erase"),
     TEXT("T Text"),
     DETAILS("🔤 Details"),
     TICK("✓ Tick"),
@@ -111,7 +112,17 @@ private enum class Tool(val label: String) {
 
 private val INKS = listOf(Color(0xFF111111), Color(0xFF0D2A8A), Color(0xFFC62828), Color(0xFF2E7D32))
 
-private fun today() = SimpleDateFormat("dd/MM/yyyy", Locale.US).format(Date())
+/** A pen, highlighter or eraser line ([size] 0..1 from the slider); the eraser paints white paper. */
+private fun strokeFor(tool: Tool, points: List<Offset>, ink: Color, size: Float, pageWidth: Float): Mark.Stroke {
+    val base = pageWidth / 1000f
+    return when (tool) {
+        Tool.HIGHLIGHT -> Mark.Stroke(points, android.graphics.Color.YELLOW, base * (12 + 40 * size), true)
+        Tool.ERASE -> Mark.Stroke(points, android.graphics.Color.WHITE, base * (8 + 70 * size), false)
+        else -> Mark.Stroke(points, ink.toArgb(), base * (1.5f + 8 * size), false)
+    }
+}
+
+private fun today() =SimpleDateFormat("dd/MM/yyyy", Locale.US).format(Date())
 
 /** Draws marks on an Android canvas; [scale] = screen pixels per page pixel (1 when saving). */
 private fun drawMarks(canvas: android.graphics.Canvas, marks: List<Mark>, scale: Float, selected: Mark? = null) {
@@ -271,7 +282,7 @@ fun AnnotateScreen(vm: ScanViewModel, scan: Scan, index: Int, onBack: () -> Unit
     val context = LocalContext.current
     val nav = LocalAppNav.current
     val bitmap by produceState<android.graphics.Bitmap?>(null, page.path, page.lastModified()) {
-        value = withContext(Dispatchers.IO) { Images.decode(page, 2500) }
+        value = withContext(Dispatchers.IO) { runCatching { Images.decode(page, 2500) }.getOrNull() }
     }
     val library by vm.signatureList.collectAsStateWithLifecycle()
     val passport by vm.passport.collectAsStateWithLifecycle()
@@ -437,6 +448,7 @@ fun AnnotateScreen(vm: ScanViewModel, scan: Scan, index: Int, onBack: () -> Unit
                 when (tool) {
                     Tool.PEN -> "Draw with your finger."
                     Tool.HIGHLIGHT -> "Drag over text to highlight it."
+                    Tool.ERASE -> "Rub out marks, stains, stamps or old writing: they turn white. The slider sets the eraser size."
                     Tool.TEXT -> "Tap where the text should go."
                     Tool.DETAILS -> "Tap a blank field, then pick the detail to write there. Or ⋮ › Auto-fill blank fields."
                     Tool.TICK -> "Tap each box to tick."
@@ -474,20 +486,11 @@ fun AnnotateScreen(vm: ScanViewModel, scan: Scan, index: Int, onBack: () -> Unit
                             .border(1.dp, MaterialTheme.colorScheme.outlineVariant)
                             .pointerInput(tool, scale, ink, size, align, signatureRef, passport) {
                                 when (tool) {
-                                    Tool.PEN, Tool.HIGHLIGHT -> detectDragGestures(
+                                    Tool.PEN, Tool.HIGHLIGHT, Tool.ERASE -> detectDragGestures(
                                         onDragStart = { p -> current.clear(); current.add(p / scale) },
                                         onDrag = { change, _ -> current.add(change.position / scale) },
                                         onDragEnd = {
-                                            val hl = tool == Tool.HIGHLIGHT
-                                            val base = bmp.width / 1000f
-                                            marks.add(
-                                                Mark.Stroke(
-                                                    current.toList(),
-                                                    if (hl) android.graphics.Color.YELLOW else ink.toArgb(),
-                                                    if (hl) base * (12 + 40 * size) else base * (1.5f + 8 * size),
-                                                    hl,
-                                                ),
-                                            )
+                                            marks.add(strokeFor(tool, current.toList(), ink, size, bmp.width.toFloat()))
                                             current.clear()
                                         },
                                     )
@@ -692,10 +695,8 @@ private fun Modifier.drawWithMarks(
     Modifier.drawWithContent {
         drawContent()
         drawIntoCanvas { c ->
-            val live = if (current.isNotEmpty() && (tool == Tool.PEN || tool == Tool.HIGHLIGHT)) {
-                val hl = tool == Tool.HIGHLIGHT
-                val base = pageWidth / 1000f
-                listOf(Mark.Stroke(current.toList(), if (hl) android.graphics.Color.YELLOW else ink.toArgb(), if (hl) base * (12 + 40 * size) else base * (1.5f + 8 * size), hl))
+            val live = if (current.isNotEmpty() && (tool == Tool.PEN || tool == Tool.HIGHLIGHT || tool == Tool.ERASE)) {
+                listOf(strokeFor(tool, current.toList(), ink, size, pageWidth.toFloat()))
             } else emptyList()
             drawMarks(c.nativeCanvas, marks + live, scale, selected)
         }

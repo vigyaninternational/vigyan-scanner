@@ -308,7 +308,7 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
             if (total > 1) _busy.value = "Making pages clear: ${i - indices.first + 1} of $total…"
             io {
                 runCatching {
-                    val src = Images.decode(scan.pages[i], 3000)
+                    val src = Images.decode(scan.pages[i], Quality.NORMAL.maxSide)
                     val out = Filters.clear(src)
                     src.recycle()
                     repo.replacePage(scan, i, out, reshaped = false)

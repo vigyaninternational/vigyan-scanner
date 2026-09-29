@@ -135,7 +135,22 @@ object Images {
     }
 
     fun save(bitmap: Bitmap, dest: File, quality: Int = 92) {
-        dest.outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, quality, it) }
+        // Written to a temporary file first: if the phone runs short of memory halfway, the old page stays whole.
+        val tmp = File(dest.parentFile, dest.name + ".tmp")
+        val ok = try {
+            tmp.outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, quality, it) }
+        } catch (t: Throwable) {
+            tmp.delete()
+            throw t
+        }
+        if (!ok || tmp.length() == 0L) {
+            tmp.delete()
+            error("Could not save ${dest.name}")
+        }
+        if (!tmp.renameTo(dest)) {
+            tmp.copyTo(dest, overwrite = true)
+            tmp.delete()
+        }
     }
 
     /** Turns the page image a quarter turn clockwise, in place. */

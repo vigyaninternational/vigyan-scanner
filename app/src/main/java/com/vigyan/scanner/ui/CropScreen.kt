@@ -53,8 +53,10 @@ import kotlinx.coroutines.withContext
 @Composable
 fun CropScreen(vm: ScanViewModel, scan: Scan, index: Int, onBack: () -> Unit) {
     val page = scan.pages.getOrNull(index) ?: return
+    var failed by remember { mutableStateOf(false) }
     val bitmap by produceState<android.graphics.Bitmap?>(null, page.path, page.lastModified()) {
-        value = withContext(Dispatchers.IO) { Images.decode(page, 3000) }
+        value = withContext(Dispatchers.IO) { runCatching { Images.decode(page, 3000) }.getOrNull() }
+        failed = value == null
     }
     // Corners in the page picture's pixels: TL, TR, BR, BL.
     var quad by remember { mutableStateOf<FloatArray?>(null) }
@@ -106,7 +108,7 @@ fun CropScreen(vm: ScanViewModel, scan: Scan, index: Int, onBack: () -> Unit) {
                 val b = bitmap
                 val q = quad
                 if (b == null || q == null) {
-                    Text("Opening the page…")
+                    Text(if (failed) "This page picture could not be opened. Go back and use ✏ › Restore the original page, or delete the page and scan it again." else "Opening the page…")
                 } else {
                     val density = LocalDensity.current
                     val maxW = with(density) { maxWidth.toPx() }
