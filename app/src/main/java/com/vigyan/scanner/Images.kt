@@ -153,10 +153,10 @@ object Images {
         }
     }
 
-    /** Turns the page image a quarter turn clockwise, in place. */
-    fun rotate(file: File) {
+    /** Turns the page image a quarter turn, in place: clockwise, or anticlockwise with [degrees] = -90. */
+    fun rotate(file: File, degrees: Float = 90f) {
         val bitmap = decode(file, 5000)
-        val rotated = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, Matrix().apply { postRotate(90f) }, true)
+        val rotated = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, Matrix().apply { postRotate(degrees) }, true)
         save(rotated, file)
         bitmap.recycle()
         rotated.recycle()

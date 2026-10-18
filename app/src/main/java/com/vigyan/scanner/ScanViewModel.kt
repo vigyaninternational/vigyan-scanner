@@ -196,7 +196,6 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
         listOf(io { Exporter.idSheet(ctx, scan, landscape, scale, pairs, suggestFileName(scan)) })
     }
 
-    fun idSheetCapacity(landscape: Boolean, scale: Float, pairs: Boolean) = Exporter.idLayout(landscape, scale, pairs).count
 
     // ---- Scan & merge by name ----
 
@@ -1286,7 +1285,7 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
 
     fun movePage(scan: Scan, from: Int, to: Int) = work("Moving page…") { io { repo.movePage(scan, from, to) } }
 
-    fun rotatePage(scan: Scan, index: Int) = work("Rotating…") { io { repo.rotatePage(scan, index) } }
+    fun rotatePage(scan: Scan, index: Int, clockwise: Boolean = true) = work("Rotating…") { io { repo.rotatePage(scan, index, clockwise) } }
 
     // ---- Export ----
 

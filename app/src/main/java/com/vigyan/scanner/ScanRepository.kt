@@ -136,9 +136,9 @@ class ScanRepository(private val context: Context) {
         return setPages(scan, pages)
     }
 
-    fun rotatePage(scan: Scan, index: Int): Scan {
+    fun rotatePage(scan: Scan, index: Int, clockwise: Boolean = true): Scan {
         val page = scan.pages[index]
-        Images.rotate(page)
+        Images.rotate(page, if (clockwise) 90f else -90f)
         ocrFile(page).delete() // the text boxes no longer fit the turned page
         originalOf(page).delete()
         return setPages(scan, scan.pages)

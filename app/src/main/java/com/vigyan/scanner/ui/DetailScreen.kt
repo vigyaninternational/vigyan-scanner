@@ -73,6 +73,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.vigyan.scanner.Exporter
+import com.vigyan.scanner.IdSheetPlan
+import com.vigyan.scanner.PhotoSheet
 import com.vigyan.scanner.Naming
 import com.vigyan.scanner.PageFilter
 import com.vigyan.scanner.PageSize
@@ -747,29 +749,54 @@ private fun NumberField(label: String, value: String, modifier: Modifier, onChan
     )
 }
 
-/** ID cards (Aadhaar, PAN, voter ID…) at real size on A4, landscape or portrait. */
+/** ID cards (Aadhaar, PAN, voter ID…) at real size on A4. Each card keeps its shape (a portrait
+ *  voter ID stays upright); ⟲ ⟳ turn a side; front and back sit side by side. */
 @Composable
 private fun IdSheetDialog(vm: ScanViewModel, scan: Scan, onDismiss: () -> Unit) {
-    var landscape by rememberSaveable { mutableStateOf(true) }
+    var landscape by rememberSaveable { mutableStateOf(false) }
     var large by rememberSaveable { mutableStateOf(false) }
     var pairs by rememberSaveable { mutableStateOf(true) }
     val scale = if (large) 1.5f else 1f
-    val perSheet = vm.idSheetCapacity(landscape, scale, pairs)
-    val sheets = if (perSheet > 0) (scan.pages.size + perSheet - 1) / perSheet else 0
+    // Re-read the shapes after a side is turned (the page file changes).
+    val portraits = remember(scan.pages.map { it.path + it.lastModified() }) { Exporter.portraitPages(scan.pages) }
+    val pw = if (landscape) PhotoSheet.A4_H else PhotoSheet.A4_W
+    val ph = if (landscape) PhotoSheet.A4_W else PhotoSheet.A4_H
+    val plan = IdSheetPlan.plan(portraits, pw, ph, scale, pairs)
+    val sheets = IdSheetPlan.sheets(plan)
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("ID cards on A4") },
         text = {
-            Column(Modifier.heightIn(max = 540.dp).verticalScroll(rememberScrollState())) {
+            Column(Modifier.heightIn(max = 560.dp).verticalScroll(rememberScrollState())) {
                 Text(
-                    "Each page of this scan is one side of a card, in page order. Scan the front, then the back, of each card " +
-                        "(use ◀ ▶ to fix the order and ⟳ to turn a card).",
+                    "Each page of this scan is one side of a card, in page order: the front, then the back, of each card. " +
+                        "A sideways card? Turn it with ⟲ ⟳ under it.",
                     style = MaterialTheme.typography.bodySmall,
                 )
-                Text("Paper", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
+                LazyRow(
+                    Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    itemsIndexed(scan.pages, key = { _, page -> page.name + page.lastModified() }) { i, page ->
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            AsyncImage(
+                                model = ImageRequest.Builder(LocalContext.current).data(page).memoryCacheKey(page.path + page.lastModified()).build(),
+                                contentDescription = "Card side ${i + 1}",
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier.height(96.dp).width(96.dp).border(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                            )
+                            Text(if (i % 2 == 0) "Front ${i / 2 + 1}" else "Back ${i / 2 + 1}", style = MaterialTheme.typography.labelSmall)
+                            Row {
+                                SmallButton("⟲") { vm.rotatePage(scan, i, clockwise = false) }
+                                SmallButton("⟳") { vm.rotatePage(scan, i, clockwise = true) }
+                            }
+                        }
+                    }
+                }
+                Text("Paper", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 4.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
-                    FilterChip(selected = landscape, onClick = { landscape = true }, label = { Text("A4 landscape (sideways)") })
                     FilterChip(selected = !landscape, onClick = { landscape = false }, label = { Text("A4 portrait") })
+                    FilterChip(selected = landscape, onClick = { landscape = true }, label = { Text("A4 landscape (sideways)") })
                 }
                 Text("Card size", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
@@ -778,11 +805,11 @@ private fun IdSheetDialog(vm: ScanViewModel, scan: Scan, onDismiss: () -> Unit) 
                 }
                 CheckRow("Front and back side by side (2 per row)", pairs) { pairs = it }
                 Text(
-                    "$perSheet card side(s) per sheet · ${scan.pages.size} page(s) → $sheets A4 sheet(s)",
+                    "${scan.pages.size} side(s) → $sheets A4 sheet(s)",
                     style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.padding(vertical = 6.dp),
                 )
-                IdSheetPreview(landscape, scale, pairs)
+                IdSheetPreview(plan, pw, ph)
                 Text("Print at 100% (actual size) for real-size cards.", style = MaterialTheme.typography.bodySmall)
                 Column(Modifier.padding(top = 8.dp)) {
                     SendButtons(onDenied = { vm.say("Storage permission is needed to save to the phone") }) { target ->
@@ -800,20 +827,17 @@ private fun IdSheetDialog(vm: ScanViewModel, scan: Scan, onDismiss: () -> Unit) 
     )
 }
 
-/** The sheet drawn to scale, with a box where each card goes. */
+/** The first sheet drawn to scale, with a box where each card side goes (portrait or landscape). */
 @Composable
-private fun IdSheetPreview(landscape: Boolean, scale: Float, pairs: Boolean) {
-    val layout = Exporter.idLayout(landscape, scale, pairs)
-    val pw = if (landscape) 297f else 210f
-    val ph = if (landscape) 210f else 297f
+private fun IdSheetPreview(plan: List<IdSheetPlan.Box>, pw: Float, ph: Float) {
     Box(Modifier.fillMaxWidth().padding(vertical = 6.dp), contentAlignment = Alignment.Center) {
         androidx.compose.foundation.Canvas(
             Modifier.width((170f * pw / 297f).dp).height((170f * ph / 297f).dp)
                 .border(1.dp, Color.Gray).background(Color.White),
         ) {
             val k = size.width / pw
-            layout.positions.forEach { (x, y) ->
-                drawRect(Color(0xFF90CAF9), Offset(x * k, y * k), androidx.compose.ui.geometry.Size(layout.photoW * k, layout.photoH * k))
+            plan.filter { it.sheet == 0 }.forEach { b ->
+                drawRect(Color(0xFF90CAF9), Offset(b.x * k, b.y * k), androidx.compose.ui.geometry.Size(b.w * k, b.h * k))
             }
         }
     }

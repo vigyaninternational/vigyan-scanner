@@ -163,16 +163,16 @@ val HelpTopics = listOf(
     ),
     HelpTopic(
         "idcards", "🪪", "ID cards on A4 (Aadhaar, PAN…)",
-        "Prints small cards at their real size on one A4 sheet, like a photocopy, landscape or portrait.",
+        "Prints cards at their real size on A4, like a photocopy: front and back side by side. Portrait cards (voter ID) stay upright.",
         listOf(
             "Tap the 🪪 ID cards on A4 card.",
             "Scan the front of the first card, then its back, then the next card, and so on. The scanner crops each card.",
             "Choose A4 landscape (sideways) or portrait, real size or bigger (1.5×), and \"front and back side by side\".",
-            "The small picture shows where each card goes, and how many sheets it makes.",
+            "A card came out sideways? Tap ⟲ or ⟳ under it in the box. The small picture shows where each card goes, and how many sheets it makes.",
             "Save to phone, Google Drive, Share, or 🖨 Print.",
             "For cards already scanned: open the scan and tap 🪪 ID cards on A4.",
         ),
-        listOf("Wrong order? Close the box, move pages with ◀ ▶, turn with ⟳, then tap 🪪 ID cards on A4 again.", "Print at 100% (actual size) so the cards come out at real size."),
+        listOf("Wrong order? Close the box, move pages with ◀ ▶, then tap 🪪 ID cards on A4 again.", "Print at 100% (actual size) so the cards come out at real size."),
     ),
     HelpTopic(
         "compress", "🗜", "Compress a PDF",

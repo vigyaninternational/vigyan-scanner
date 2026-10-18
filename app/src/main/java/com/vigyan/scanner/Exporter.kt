@@ -313,27 +313,33 @@ object Exporter {
         return PortalResult(file, note, kb, outW, outH, result.quality, result.scale, result.fits && result.bytes.size >= minBytes)
     }
 
-    /**
-     * Where ID cards go on an A4 sheet (mm): real size is 85.6 × 54 mm, times [scale]. With
-     * [pairs], two per row, so a card's front and back sit side by side.
-     */
-    fun idLayout(landscape: Boolean, scale: Float, pairs: Boolean): PhotoSheet.Layout {
-        val pw = if (landscape) PhotoSheet.A4_H else PhotoSheet.A4_W
-        val ph = if (landscape) PhotoSheet.A4_W else PhotoSheet.A4_H
-        return PhotoSheet.layout(pw, ph, 85.6f * scale, 54f * scale, 10f, 8f, maxCols = if (pairs) 2 else 0)
+    /** Portrait (taller than wide) pages, read from the image size without loading the picture. */
+    fun portraitPages(pages: List<File>): List<Boolean> = pages.map { f ->
+        val o = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeFile(f.path, o)
+        o.outHeight > o.outWidth
     }
 
-    /** Scanned ID cards (Aadhaar, PAN, voter ID…) at their real size on A4, ready to print or attach. */
+    /** Where each page goes on the A4 sheets (mm), see [IdSheetPlan]. */
+    fun idPlan(pages: List<File>, landscape: Boolean, scale: Float, pairs: Boolean): List<IdSheetPlan.Box> {
+        val pw = if (landscape) PhotoSheet.A4_H else PhotoSheet.A4_W
+        val ph = if (landscape) PhotoSheet.A4_W else PhotoSheet.A4_H
+        return IdSheetPlan.plan(portraitPages(pages), pw, ph, scale, pairs)
+    }
+
+    /**
+     * Scanned ID cards (Aadhaar, PAN, voter ID…) at their real size on A4, ready to print or attach.
+     * Each page keeps its shape (portrait voter ID stays upright); front and back side by side.
+     */
     fun idSheet(context: Context, scan: Scan, landscape: Boolean, scale: Float, pairs: Boolean, name: String): File {
-        val layout = idLayout(landscape, scale, pairs)
-        if (layout.count == 0) error("The cards don't fit on A4 at this size")
+        val plan = idPlan(scan.pages, landscape, scale, pairs)
         val k = 72f / 25.4f // points per mm
         val pageW = (if (landscape) PhotoSheet.A4_H else PhotoSheet.A4_W) * k
         val pageH = (if (landscape) PhotoSheet.A4_W else PhotoSheet.A4_H) * k
-        val pages = scan.pages.chunked(layout.count).map { chunk ->
-            val placements = chunk.mapIndexed { j, file ->
-                val (x, y) = layout.positions[j]
-                val bmp = Images.decode(file, 1800)
+        val pages = (0 until IdSheetPlan.sheets(plan)).map { sheet ->
+            val placements = scan.pages.indices.filter { plan[it].sheet == sheet }.map { i ->
+                val box = plan[i]
+                val bmp = Images.decode(scan.pages[i], 1800)
                 // A thin grey edge to cut along.
                 val framed = bmp.copy(Bitmap.Config.ARGB_8888, true)
                 bmp.recycle()
@@ -343,11 +349,13 @@ object Exporter {
                 )
                 val image = Images.encode(framed, 88)
                 framed.recycle()
-                // Fitted into its place, keeping the card's shape.
-                val s = minOf(layout.photoW / image.pixelWidth, layout.photoH / image.pixelHeight)
+                // Fitted into its box, keeping the card's shape (Placement measures from the top-left).
+                val s = minOf(box.w / image.pixelWidth, box.h / image.pixelHeight)
                 val w = image.pixelWidth * s
                 val h = image.pixelHeight * s
-                PdfWriter.Placement(image, (x + (layout.photoW - w) / 2) * k, (y + (layout.photoH - h) / 2) * k, w * k, h * k)
+                val x = box.x + (box.w - w) / 2
+                val yTop = box.y + (box.h - h) / 2
+                PdfWriter.Placement(image, x * k, yTop * k, w * k, h * k)
             }
             PdfWriter.Page(pageW, pageH, placements)
         }

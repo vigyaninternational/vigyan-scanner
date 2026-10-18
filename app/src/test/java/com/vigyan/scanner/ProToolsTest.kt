@@ -537,12 +537,51 @@ class ChseTest {
 }
 
 class IdSheetLayoutTest {
+    private val a4w = PhotoSheet.A4_W
+    private val a4h = PhotoSheet.A4_H
+
     @Test
-    fun cardsPerSheet() {
-        assertEquals(6, Exporter.idLayout(landscape = true, scale = 1f, pairs = true).count) // 3 cards, front + back
-        assertEquals(9, Exporter.idLayout(landscape = true, scale = 1f, pairs = false).count)
-        assertEquals(4, Exporter.idLayout(landscape = true, scale = 1.5f, pairs = true).count)
-        assertEquals(8, Exporter.idLayout(landscape = false, scale = 1f, pairs = true).count)
+    fun portraitVoterCardStaysUprightFrontAndBackSideBySide() {
+        val plan = IdSheetPlan.plan(listOf(true, true), a4w, a4h)
+        val (front, back) = plan
+        assertEquals(54f, front.w, 0.01f)
+        assertEquals(85.6f, front.h, 0.01f) // upright, not turned sideways
+        assertEquals(front.y, back.y, 0.01f) // same row
+        assertTrue("back is to the right of the front", back.x > front.x + front.w)
+        assertEquals(0, back.sheet)
+    }
+
+    @Test
+    fun landscapeAndPortraitCardsMixed() {
+        // PAN front + back (landscape), then voter front + back (portrait): two rows on one sheet.
+        val plan = IdSheetPlan.plan(listOf(false, false, true, true), a4w, a4h)
+        assertEquals(plan[0].y, plan[1].y, 0.01f)
+        assertEquals(85.6f, plan[0].w, 0.01f)
+        assertEquals(plan[2].y, plan[3].y, 0.01f)
+        assertEquals(10f + 54f + 8f, plan[2].y, 0.01f) // the second row starts below the first
+        assertEquals(1, IdSheetPlan.sheets(plan))
+        plan.forEach { assertTrue("inside the page", it.x >= 0f && it.x + it.w <= a4w && it.y + it.h <= a4h) }
+    }
+
+    @Test
+    fun sheetsFillThenANewOneStarts() {
+        assertEquals(1, IdSheetPlan.sheets(IdSheetPlan.plan(List(8) { false }, a4w, a4h))) // 4 cards, front + back
+        assertEquals(2, IdSheetPlan.sheets(IdSheetPlan.plan(List(10) { false }, a4w, a4h)))
+        assertEquals(1, IdSheetPlan.sheets(IdSheetPlan.plan(List(6) { true }, a4w, a4h))) // 3 voter cards
+        assertEquals(0, IdSheetPlan.sheets(IdSheetPlan.plan(emptyList(), a4w, a4h)))
+    }
+
+    @Test
+    fun withoutPairsAsManyAsFitAcross() {
+        val plan = IdSheetPlan.plan(List(4) { false }, PhotoSheet.A4_H, PhotoSheet.A4_W, pairs = false)
+        assertEquals(plan[0].y, plan[2].y, 0.01f) // three landscape cards across A4 landscape
+        assertTrue(plan[3].y > plan[0].y)
+    }
+
+    @Test
+    fun biggerCards() {
+        val plan = IdSheetPlan.plan(listOf(false), a4w, a4h, scale = 1.5f)
+        assertEquals(85.6f * 1.5f, plan[0].w, 0.01f)
     }
 }
 
