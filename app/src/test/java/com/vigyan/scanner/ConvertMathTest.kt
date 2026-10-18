@@ -18,6 +18,13 @@ class ConvertMathTest {
         assertEquals(listOf(0, 1, 2), ConvertMath.parsePages("all", 3))
         assertEquals(listOf(0, 1), ConvertMath.parsePages("1–2", 3)) // en dash typed by some keyboards
         assertEquals(listOf(2, 5), ConvertMath.parsePages("3 6", 6))
+        // Spaces around the dash are one range, not "1", "-", "3".
+        assertEquals(listOf(0, 1, 2), ConvertMath.parsePages("1 - 3", 10))
+        assertEquals(listOf(1, 2, 3, 5), ConvertMath.parsePages("2 -4, 6", 10))
+        assertEquals(listOf(1, 2, 3, 6), ConvertMath.parsePages("2- 4 7", 10))
+        assertEquals(listOf(0, 1), ConvertMath.parsePages("1 – 2", 3))
+        // "-3" = from the first page.
+        assertEquals(listOf(0, 1, 2), ConvertMath.parsePages("-3", 10))
     }
 
     @Test
@@ -129,11 +136,29 @@ class ConvertMathTest {
         assertEquals("a_b", ConvertMath.baseName("a/b"))
         assertEquals("file", ConvertMath.baseName("  "))
         assertEquals("v1.2 notes", ConvertMath.baseName("v1.2 notes")) // a dot in the name is not an extension
+        // A typed name with a number after the dot keeps it.
+        assertEquals("Fees.2026", ConvertMath.baseName("Fees.2026"))
+        assertEquals("Report v1.2", ConvertMath.baseName("Report v1.2"))
+        assertEquals("scan", ConvertMath.baseName("scan.mp4"))
+        assertEquals("photo", ConvertMath.baseName("photo.HEIC"))
         assertEquals("doc.jpg", ConvertMath.pageFileName("doc", 0, 1, "jpg"))
         assertEquals("doc_page3.png", ConvertMath.pageFileName("doc", 2, 5, "png"))
         assertEquals("a.jpg", ConvertMath.uniqueFileName("a.jpg", setOf("b.jpg")))
         assertEquals("a (2).jpg", ConvertMath.uniqueFileName("a.jpg", setOf("a.jpg")))
         assertEquals("a (3).jpg", ConvertMath.uniqueFileName("a.jpg", setOf("a.jpg", "a (2).jpg")))
+    }
+
+    @Test
+    fun aSmallPhotoIsNeverMadeBigger() {
+        val max = 200 * 1024
+        // 30 KB photo, "under 200 KB": it may not come out bigger than 30 KB.
+        assertEquals(30 * 1024, ConvertMath.shrinkTarget(30L * 1024, max, 0))
+        // Bigger than the limit: the limit.
+        assertEquals(max, ConvertMath.shrinkTarget(900L * 1024, max, 0))
+        // Under a portal's minimum: it has to grow, so the limit is used.
+        assertEquals(max, ConvertMath.shrinkTarget(10L * 1024, max, 20 * 1024))
+        // Size not known.
+        assertEquals(max, ConvertMath.shrinkTarget(-1, max, 0))
     }
 
     @Test

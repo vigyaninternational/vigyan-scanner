@@ -1334,12 +1334,20 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Slow work for the Convert files tool, with the progress dialog; [block] can change its text. */
     fun runConvert(label: String, block: suspend (step: (String) -> Unit) -> Unit) = work(label) {
-        block { _busy.value = it }
+        lowMemoryAsNotice { block { _busy.value = it } }
+    }
+
+    /** A big PDF can use up the phone's memory: say so (and close the progress dialog) instead of the app closing. */
+    private suspend fun <T> lowMemoryAsNotice(block: suspend () -> T): T = try {
+        block()
+    } catch (e: OutOfMemoryError) {
+        System.gc()
+        throw Notice("The phone ran out of memory. Try fewer pages or photos, a lower quality or a smaller dpi.")
     }
 
     /** Makes files for the Convert files tool, then saves or shares them. The note (if any) is shown too. */
     fun sendConvert(target: Target, label: String, makeFiles: suspend (step: (String) -> Unit) -> Pair<List<File>, String?>) = work(label) {
-        val (files, note) = makeFiles { _busy.value = it }
+        val (files, note) = lowMemoryAsNotice { makeFiles { _busy.value = it } }
         if (files.isEmpty()) error("Nothing to save")
         when (target) {
             Target.PHONE -> {

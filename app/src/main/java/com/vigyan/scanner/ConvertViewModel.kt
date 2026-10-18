@@ -61,7 +61,7 @@ class ConvertViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun <T> io(block: () -> T): T = withContext(Dispatchers.IO) { block() }
 
-    private fun out() = Convert.outDir(ctx)
+    private fun out(part: String) = Convert.outDir(ctx, part)
 
     // ---------------- Picking ----------------
 
@@ -118,14 +118,14 @@ class ConvertViewModel(app: Application) : AndroidViewModel(app) {
     suspend fun photosToPdf(name: String, a4: Boolean, quality: ConvertMath.PdfQuality, maxBytes: Int?, step: (String) -> Unit): Pair<File, String?> = io {
         val list = photos.value
         val base = ConvertMath.baseName(name.ifBlank { list.firstOrNull()?.name.orEmpty() }, "Photos")
-        Convert.photosToPdf(ctx, list.map { Convert.PhotoIn(it.uri, it.turns) }, a4, quality, maxBytes, File(out(), "$base.pdf"), step)
+        Convert.photosToPdf(ctx, list.map { Convert.PhotoIn(it.uri, it.turns) }, a4, quality, maxBytes, File(out("pdf"), "$base.pdf"), step)
     }
 
     suspend fun pdfToPhotos(format: ConvertMath.PicFormat, dpi: Int, maxBytesEach: Int?, zip: Boolean, step: (String) -> Unit): Pair<List<File>, String?> = io {
         val pdf = toPhotos.value ?: throw Notice("Pick a PDF first")
         val chosen = toPhotosPicked.value.sorted()
         if (chosen.isEmpty()) throw Notice("Tick at least one page")
-        val dir = out()
+        val dir = out("pictures")
         val pics = File(dir, "pictures").apply { mkdirs() }
         val (files, note) = Convert.pdfToPhotos(pdf.file, pdf.base, chosen, format, dpi, maxBytesEach, pics, step)
         val result = if (zip && files.size > 1) listOf(Convert.zip(files, File(dir, "${pdf.base}_pictures.zip"))) else files
@@ -136,8 +136,8 @@ class ConvertViewModel(app: Application) : AndroidViewModel(app) {
         val src = sizeSource.value ?: throw Notice("Pick a photo or PDF first")
         val base = ConvertMath.baseName(src.name, "file") + "_small"
         val r = io {
-            if (src.pdf != null) Convert.shrinkPdf(src.pdf, base, maxBytes, out(), step)
-            else Convert.shrinkPhoto(ctx, src.uri, base, src.size, maxBytes, minBytes, out())
+            if (src.pdf != null) Convert.shrinkPdf(src.pdf, base, maxBytes, out("size"), step)
+            else Convert.shrinkPhoto(ctx, src.uri, base, src.size, maxBytes, minBytes, out("size"))
         }
         sizeResult.value = r
     }
@@ -146,20 +146,20 @@ class ConvertViewModel(app: Application) : AndroidViewModel(app) {
         val items = merge.value
         if (items.size < 2) throw Notice("Add at least two files to join")
         val base = ConvertMath.baseName(name, "Merged")
-        Convert.merge(ctx, items.map { Convert.MergeIn(it.photo, it.pdf?.file, it.turns) }, File(out(), "$base.pdf"), step)
+        Convert.merge(ctx, items.map { Convert.MergeIn(it.photo, it.pdf?.file, it.turns) }, File(out("merge"), "$base.pdf"), step)
     }
 
     suspend fun pickPages(separate: Boolean, step: (String) -> Unit): List<File> = io {
         val pdf = pages.value ?: throw Notice("Pick a PDF first")
         val chosen = pagesPicked.value
         if (chosen.isEmpty()) throw Notice("Choose at least one page")
-        Convert.pickPages(pdf.file, pdf.base, chosen, pagesTurns.value, separate, out(), step)
+        Convert.pickPages(pdf.file, pdf.base, chosen, pagesTurns.value, separate, out("pages"), step)
     }
 
     suspend fun changeFormat(format: ConvertMath.PicFormat, quality: Int, zip: Boolean, step: (String) -> Unit): List<File> = io {
         val list = formatPhotos.value
         if (list.isEmpty()) throw Notice("Pick photos first")
-        val dir = out()
+        val dir = out("format")
         val pics = File(dir, "pictures").apply { mkdirs() }
         val files = Convert.changeFormat(ctx, list.map { it.uri to ConvertMath.baseName(it.name, "photo") }, format, quality, pics, step)
         if (zip && files.size > 1) listOf(Convert.zip(files, File(dir, "Photos_${format.ext}.zip"))) else files

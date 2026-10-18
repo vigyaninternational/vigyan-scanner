@@ -31,8 +31,11 @@ object Convert {
     /** Working folder (shared through the FileProvider as "convert"). */
     fun dir(context: Context) = File(context.cacheDir, "convert").apply { mkdirs() }
 
-    /** A fresh, empty folder for the files of one save / share. */
-    fun outDir(context: Context) = File(dir(context), "out").apply {
+    /**
+     * A fresh, empty folder for the files of one save / share. Each part has its own, so making
+     * files in one part never deletes a result another part still shows (Change size's result).
+     */
+    fun outDir(context: Context, part: String) = File(dir(context), "out_$part").apply {
         deleteRecursively()
         mkdirs()
     }
@@ -267,14 +270,16 @@ object Convert {
 
     fun shrinkPhoto(context: Context, uri: Uri, base: String, before: Long, maxBytes: Int, minBytes: Int, outDir: File): SizeResult {
         val bmp = loadPhoto(context, uri, 3000)
+        // Already small enough: never make it bigger than it was (still upright, as a JPG).
+        val target = ConvertMath.shrinkTarget(before, maxBytes, minBytes)
         val (image, fits) = try {
-            fitJpeg(bmp, maxBytes, minBytes)
+            fitJpeg(bmp, target, minBytes)
         } finally {
             bmp.recycle()
         }
         val dest = File(outDir, "$base.jpg").also { it.writeBytes(image.jpeg) }
         val note = when {
-            !fits -> "Could not get it under ${maxBytes / 1024} KB. This is the smallest it can be."
+            !fits && dest.length() > maxBytes -> "Could not get it under ${maxBytes / 1024} KB. This is the smallest it can be."
             minBytes > 0 && dest.length() < minBytes -> "It is under the ${minBytes / 1024} KB minimum even at the best quality."
             else -> null
         }

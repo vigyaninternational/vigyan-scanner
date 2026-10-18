@@ -46,7 +46,9 @@ object ConvertMath {
         if (t == "all" || t == "*") return (0 until count).toList()
         if (t.isEmpty()) return null
         val out = LinkedHashSet<Int>()
-        for (raw in t.split(',', ';', ' ').map { it.trim() }.filter { it.isNotEmpty() }) {
+        // "1 - 3" (spaces around the dash, as many keyboards type it) is one range, not "1", "-", "3".
+        val joined = t.replace('–', '-').replace('—', '-').replace(Regex("""\s*-\s*"""), "-")
+        for (raw in joined.split(',', ';', ' ').map { it.trim() }.filter { it.isNotEmpty() }) {
             val part = raw.replace('–', '-').replace('—', '-')
             val dash = part.indexOf('-')
             if (dash < 0) {
@@ -54,7 +56,9 @@ object ConvertMath {
                 if (n !in 1..count) return null
                 out += n - 1
             } else {
-                val a = part.substring(0, dash).trim().toIntOrNull() ?: return null
+                // "-3" means from the first page to page 3.
+                val aText = part.substring(0, dash).trim()
+                val a = if (aText.isEmpty()) 1 else aText.toIntOrNull() ?: return null
                 // "4-" means from page 4 to the end.
                 val bText = part.substring(dash + 1).trim()
                 val b = if (bText.isEmpty()) count else bText.toIntOrNull() ?: return null
@@ -167,7 +171,8 @@ object ConvertMath {
     fun baseName(displayName: String, fallback: String = "file"): String {
         val noExt = displayName.trim().let { n ->
             val dot = n.lastIndexOf('.')
-            if (dot > 0 && n.length - dot <= 5) n.substring(0, dot) else n
+            // ".jpg", ".jpeg", ".mp4" are extensions; ".2026" in "Fees.2026" (a typed name) is not.
+            if (dot > 0 && n.length - dot in 2..5 && n.substring(dot + 1).any { it.isLetter() }) n.substring(0, dot) else n
         }
         return noExt.replace(Regex("""[\\/:*?"<>|]"""), "_").replace(Regex("""\s+"""), " ").trim().take(80).ifBlank { fallback }
     }
@@ -192,6 +197,13 @@ object ConvertMath {
         val kb = (bytes + 1023) / 1024
         return if (kb < 1024) "$kb KB" else String.format(Locale.US, "%.1f MB", bytes / (1024.0 * 1024.0))
     }
+
+    /**
+     * The byte limit used to make a photo of [before] bytes "under [maxBytes]": a photo that is
+     * already under it (and not under [minBytes]) is not allowed to come out bigger than it was.
+     */
+    fun shrinkTarget(before: Long, maxBytes: Int, minBytes: Int): Int =
+        if (before > 0 && before >= minBytes && before < maxBytes) before.toInt() else maxBytes
 
     /** A typed "under ___ KB" → bytes, or null when empty / not a sensible number. */
     fun kbToBytes(text: String): Int? {

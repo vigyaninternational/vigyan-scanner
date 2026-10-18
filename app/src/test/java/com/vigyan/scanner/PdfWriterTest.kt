@@ -41,6 +41,21 @@ class PdfWriterTest {
     }
 
     @Test
+    fun xrefOffsetsPointAtTheirObjects() {
+        // The PDF is written straight to the output stream: every xref entry must still be exact.
+        val bytes = pdf()
+        val text = String(bytes, Charsets.ISO_8859_1)
+        val start = text.substringAfterLast("startxref\n").substringBefore("\n").trim().toInt()
+        assertTrue(text.startsWith("xref", start))
+        val lines = text.substring(start).lines()
+        val count = lines[1].split(" ")[1].toInt()
+        for (n in 1 until count) {
+            val offset = lines[2 + n].substring(0, 10).toInt()
+            assertTrue("object $n at $offset", text.startsWith("$n 0 obj", offset))
+        }
+    }
+
+    @Test
     fun searchableText() {
         PDDocument.load(pdf()).use { doc ->
             assertEquals(2, doc.numberOfPages)

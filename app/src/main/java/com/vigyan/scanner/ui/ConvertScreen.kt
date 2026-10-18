@@ -472,16 +472,19 @@ private fun PickPages(vm: ScanViewModel, cv: ConvertViewModel) {
         return
     }
     PdfHeader(doc) { picker.launch(arrayOf("application/pdf")) }
+    // Typed pages that are not a page list: nothing is made until they are fixed (the old choice is not used).
+    val badText = typed.isNotBlank() && ConvertMath.parsePages(typed, doc.pageCount) == null
     OutlinedTextField(
         typed,
         { t ->
             typed = t
-            ConvertMath.parsePages(t, doc.pageCount)?.let { cv.pagesPicked.value = it }
+            if (t.isBlank()) cv.pagesPicked.value = emptyList()
+            else ConvertMath.parsePages(t, doc.pageCount)?.let { cv.pagesPicked.value = it }
         },
         label = { Text("Pages, e.g. 1-3, 5") },
         singleLine = true,
-        isError = typed.isNotBlank() && ConvertMath.parsePages(typed, doc.pageCount) == null,
-        supportingText = if (typed.isNotBlank() && ConvertMath.parsePages(typed, doc.pageCount) == null) {
+        isError = badText,
+        supportingText = if (badText) {
             { Text("Use page numbers from 1 to ${doc.pageCount}, like 1-3, 5") }
         } else null,
         modifier = Modifier.fillMaxWidth(),
@@ -507,7 +510,7 @@ private fun PickPages(vm: ScanViewModel, cv: ConvertViewModel) {
     Note("Tap a page to choose it. ⟲ ⟳ turn a page.")
     Title("Make")
     Chips(listOf(false, true), separate, { if (it) "Each page as its own PDF (ZIP)" else "One PDF with these pages" }) { separate = it }
-    SendButtons(enabled = picked.isNotEmpty(), onDenied = denied(vm)) { target ->
+    SendButtons(enabled = picked.isNotEmpty() && !badText, onDenied = denied(vm)) { target ->
         vm.sendConvert(target, "Making the PDF…") { step -> cv.pickPages(separate, step) to null }
     }
 }

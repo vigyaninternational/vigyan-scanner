@@ -44,7 +44,8 @@ class PdfWriter {
         val security = password?.takeIf { it.isNotEmpty() }?.let { Security(it, id) }
 
         var next = 1
-        val bodies = sortedMapOf<Int, ByteArray>()
+        // Each object's bytes in pieces: a page's JPEG is written as it is, never copied into one big buffer.
+        val bodies = sortedMapOf<Int, List<ByteArray>>()
         val catalog = next++
         val pagesObj = next++
         val font = next++
@@ -67,24 +68,25 @@ class PdfWriter {
             }
             bodies[contentNum] = stream(contentNum, "/Filter /FlateDecode", deflate(content(page)), security)
             val xobjects = imageNums.mapIndexed { i, n -> "/Im$i $n 0 R" }.joinToString(" ")
-            bodies[pageNum] = latin1(
+            bodies[pageNum] = latin1L(
                 "<< /Type /Page /Parent $pagesObj 0 R /MediaBox [0 0 ${num(page.width)} ${num(page.height)}] " +
                     "/Resources << /Font << /F1 $font 0 R >> /XObject << $xobjects >> >> /Contents $contentNum 0 R >>",
             )
         }
-        bodies[font] = latin1("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
-        bodies[pagesObj] = latin1("<< /Type /Pages /Kids [${pageNums.joinToString(" ") { "$it 0 R" }}] /Count ${pageNums.size} >>")
-        bodies[catalog] = latin1("<< /Type /Catalog /Pages $pagesObj 0 R >>")
-        val encryptNum = security?.let { s -> (next++).also { bodies[it] = latin1(s.dictionary()) } }
+        bodies[font] = latin1L("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
+        bodies[pagesObj] = latin1L("<< /Type /Pages /Kids [${pageNums.joinToString(" ") { "$it 0 R" }}] /Count ${pageNums.size} >>")
+        bodies[catalog] = latin1L("<< /Type /Catalog /Pages $pagesObj 0 R >>")
+        val encryptNum = security?.let { s -> (next++).also { bodies[it] = latin1L(s.dictionary()) } }
 
-        val buf = ByteArrayOutputStream()
+        // Written straight to [out] (counting bytes for the xref), so a 300-page PDF is not held in memory twice.
+        val buf = CountingStream(out.buffered(64 * 1024))
         buf.write(latin1("%PDF-1.4\n"))
         buf.write(byteArrayOf('%'.code.toByte(), 0xE2.toByte(), 0xE3.toByte(), 0xCF.toByte(), 0xD3.toByte(), '\n'.code.toByte()))
         val offsets = IntArray(next)
         for ((n, body) in bodies) {
             offsets[n] = buf.size()
             buf.write(latin1("$n 0 obj\n"))
-            buf.write(body)
+            for (piece in body) buf.write(piece)
             buf.write(latin1("\nendobj\n"))
         }
         val xref = buf.size()
@@ -95,7 +97,22 @@ class PdfWriter {
         if (encryptNum != null) sb.append(" /Encrypt $encryptNum 0 R")
         sb.append(" >>\nstartxref\n$xref\n%%EOF\n")
         buf.write(latin1(sb.toString()))
-        buf.writeTo(out)
+        buf.flush()
+    }
+
+    /** Passes bytes on to [out] and counts them (the byte offsets of the objects). */
+    private class CountingStream(private val out: OutputStream) : OutputStream() {
+        private var count = 0L
+        fun size(): Int = Math.toIntExact(count)
+        override fun write(b: Int) {
+            out.write(b)
+            count++
+        }
+        override fun write(b: ByteArray, off: Int, len: Int) {
+            out.write(b, off, len)
+            count += len
+        }
+        override fun flush() = out.flush()
     }
 
     private fun content(page: Page): ByteArray {
@@ -135,13 +152,9 @@ class PdfWriter {
         return latin1(sb.toString())
     }
 
-    private fun stream(objNum: Int, dict: String, data: ByteArray, security: Security?): ByteArray {
+    private fun stream(objNum: Int, dict: String, data: ByteArray, security: Security?): List<ByteArray> {
         val bytes = security?.encrypt(objNum, data) ?: data
-        val out = ByteArrayOutputStream()
-        out.write(latin1("<< $dict /Length ${bytes.size} >>\nstream\n"))
-        out.write(bytes)
-        out.write(latin1("\nendstream"))
-        return out.toByteArray()
+        return listOf(latin1("<< $dict /Length ${bytes.size} >>\nstream\n"), bytes, latin1("\nendstream"))
     }
 
     private fun deflate(data: ByteArray): ByteArray {
@@ -158,6 +171,7 @@ class PdfWriter {
     private companion object {
         fun num(v: Float) = String.format(Locale.US, "%.2f", v)
         fun latin1(s: String) = s.toByteArray(Charsets.ISO_8859_1)
+        fun latin1L(s: String) = listOf(latin1(s))
 
         /** Keeps characters the standard Helvetica font can show (Latin-1); others become spaces. */
         fun winAnsi(s: String) = s.map { c -> if (c.code in 32..126 || c.code in 160..255) c else ' ' }.joinToString("")
