@@ -445,6 +445,7 @@ object Exporter {
         "txt" -> "text/plain"
         "csv" -> "text/csv"
         "png" -> "image/png"
+        "webp" -> "image/webp"
         "zip" -> "application/zip"
         "xlsx" -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         else -> "application/octet-stream"

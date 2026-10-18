@@ -123,7 +123,7 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 block()
             } catch (e: Exception) {
-                _message.value = "Failed: ${e.message ?: e.javaClass.simpleName}"
+                _message.value = if (e is Notice) e.message else "Failed: ${e.message ?: e.javaClass.simpleName}"
             } finally {
                 _busy.value = null
                 reload()
@@ -1329,6 +1329,29 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
             if (forms.isEmpty()) error("No filled forms here yet. Open a scan and use Smart Fill first.")
             listOf(io { if (excel) Exporter.formsXlsx(ctx, forms, name) else Exporter.formsCsv(ctx, forms, name) })
         }
+
+    // ---- Convert files ----
+
+    /** Slow work for the Convert files tool, with the progress dialog; [block] can change its text. */
+    fun runConvert(label: String, block: suspend (step: (String) -> Unit) -> Unit) = work(label) {
+        block { _busy.value = it }
+    }
+
+    /** Makes files for the Convert files tool, then saves or shares them. The note (if any) is shown too. */
+    fun sendConvert(target: Target, label: String, makeFiles: suspend (step: (String) -> Unit) -> Pair<List<File>, String?>) = work(label) {
+        val (files, note) = makeFiles { _busy.value = it }
+        if (files.isEmpty()) error("Nothing to save")
+        when (target) {
+            Target.PHONE -> {
+                val where = io { Exporter.saveToPhone(ctx, files, _settings.value.saveTree?.let(Uri::parse)) }
+                _message.value = listOfNotNull("Saved ${files.size} file(s) to $where.", note).joinToString(" ")
+            }
+            Target.DRIVE, Target.SHARE, Target.PRINT -> {
+                _pendingSend.value = PendingSend(target, files)
+                if (note != null) _message.value = note
+            }
+        }
+    }
 
     private fun send(target: Target, label: String, makeFiles: suspend () -> List<File>) = work(label) {
         val files = makeFiles()

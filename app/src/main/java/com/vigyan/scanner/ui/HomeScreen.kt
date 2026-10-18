@@ -448,6 +448,13 @@ fun HomeScreen(vm: ScanViewModel, onOpen: (Scan, ScanMode) -> Unit, onNavigate: 
                         }
                     }
                 }
+                item {
+                    ActionCard(
+                        "Convert files",
+                        "JPG ↔ PDF, many pages, merge, split, change size in KB.",
+                        "🔄", CardPurple, Modifier.fillMaxWidth(),
+                    ) { onNavigate("convert") }
+                }
             }
 
             item {

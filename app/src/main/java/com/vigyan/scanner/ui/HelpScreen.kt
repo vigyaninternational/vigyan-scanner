@@ -55,6 +55,7 @@ val HelpTopics = listOf(
             "🔤 Scan to text: read the words on a page, then copy, edit or save them.",
             "📝 Scan & fill a form: read the details (name, DOB, Aadhaar, marks…) from a form, ID card or certificate.",
             "📂 Open photo / PDF: bring in files from WhatsApp, the gallery or Files. You can also share files to Vigyan Scanner from other apps.",
+            "🔄 Convert files: photos to PDF, PDF to photos, change the size in KB, merge PDFs, pick or split pages, change photo format.",
             "Your scans are listed at the bottom of the home screen. Tap one to open it.",
         ),
         listOf("Tap ⓘ at the top of any screen for help with that screen, and 🏠 to come back home."),
@@ -186,6 +187,23 @@ val HelpTopics = listOf(
             "A scan in the app can be compressed too: open it and tap 🗜 Compress.",
         ),
         listOf("The pages become pictures, so text in the smaller PDF can't be selected."),
+    ),
+    HelpTopic(
+        "convert", "🔄", "Convert files",
+        "Change photos and PDFs from one kind to another. Tap the 🔄 Convert files card, then pick one of six parts.",
+        listOf(
+            "🖼 Photos → PDF: pick many photos, put them in order with ↑ ↓, turn them with ⟲ ⟳. Choose \"Same shape as photo\" or \"A4 (white edges)\", the quality, and if needed \"Keep under ___ KB\".",
+            "📄 PDF → photos: pick a PDF and tick the pages you want (All / None). Choose JPG, PNG or WEBP and 150, 200 or 300 dpi. Get separate pictures or one ZIP file.",
+            "📏 Change size (KB): pick a photo or PDF, type \"under ___ KB\" (or tap 50, 100, 200…), and tap Make it smaller. It shows the size before → after.",
+            "📚 Merge PDFs: add PDFs and photos, put them in order, and join them into one PDF.",
+            "✂ Pick / split pages: tick pages or type them, like 1-3, 5. Make one PDF of those pages, or each page as its own PDF (in a ZIP). ⟲ ⟳ turn a page.",
+            "🎨 Change photo format: change photos to JPG, PNG or WEBP. See-through parts become white in a JPG.",
+            "Then Save to phone, Google Drive or Share. Your original files are not changed.",
+        ),
+        listOf(
+            "A PDF locked with a password can't be opened. Save a copy without the password first.",
+            "New PDFs are made of pictures of the pages, so their text can't be selected.",
+        ),
     ),
     HelpTopic(
         "passport", "🧑", "Passport photo studio",

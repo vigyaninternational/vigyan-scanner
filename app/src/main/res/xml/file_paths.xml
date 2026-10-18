@@ -4,4 +4,5 @@
     <cache-path name="apk" path="apk/" />
     <cache-path name="camera" path="camera/" />
     <cache-path name="update" path="update/" />
+    <cache-path name="convert" path="convert/" />
 </paths>
