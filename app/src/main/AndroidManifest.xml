@@ -57,6 +57,19 @@
             </intent-filter>
         </activity>
 
+        <!-- "Scan for the ERP": the Vigyan ERP app opens this to scan an admission document and
+             gets the PDF back (ErpScanActivity). -->
+        <activity
+            android:name=".ErpScanActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:excludeFromRecents="true">
+            <intent-filter>
+                <action android:name="com.vigyan.scanner.action.SCAN_FOR_ERP" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.files"
