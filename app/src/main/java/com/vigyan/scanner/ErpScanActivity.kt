@@ -42,8 +42,12 @@ class ErpScanActivity : ComponentActivity() {
         val pages = if (res.resultCode == Activity.RESULT_OK)
             GmsDocumentScanningResult.fromActivityResultIntent(res.data)?.pages?.map { it.imageUri }.orEmpty() else emptyList()
         if (pages.isEmpty()) { setResult(Activity.RESULT_CANCELED); finish(); return@registerForActivityResult }
+        // Making the PDF takes a moment and this activity is see-through: say something is happening.
+        Toast.makeText(this@ErpScanActivity, "Making the PDF…", Toast.LENGTH_SHORT).show()
         lifecycleScope.launch {
             val file = runCatching { withContext(Dispatchers.IO) { makePdf(pages) } }.getOrNull()
+            // The scanner's page images are not needed any more (the PDF holds them, or it failed).
+            withContext(Dispatchers.IO) { deleteScannerPages(pages) }
             if (file == null) {
                 Toast.makeText(this@ErpScanActivity, "Could not make the PDF. Please try again.", Toast.LENGTH_LONG).show()
                 setResult(Activity.RESULT_CANCELED)
@@ -77,6 +81,22 @@ class ErpScanActivity : ComponentActivity() {
                 Toast.makeText(this, "Scanner could not start: ${it.message}. Update Google Play services and try again.", Toast.LENGTH_LONG).show()
                 setResult(Activity.RESULT_CANCELED); finish()
             }
+    }
+
+    /**
+     * Deletes the page images the scanner left in this app's own cache. Only file:// URIs inside
+     * our cache dir are touched — never a content:// URI or a file that belongs to anyone else.
+     */
+    private fun deleteScannerPages(pages: List<android.net.Uri>) {
+        val cacheRoot = runCatching { cacheDir.canonicalPath }.getOrNull() ?: return
+        for (uri in pages) {
+            if (uri.scheme != "file") continue
+            val path = uri.path ?: continue
+            runCatching {
+                val f = File(path).canonicalFile
+                if (f.path.startsWith(cacheRoot + File.separator) && f.isFile) f.delete()
+            }
+        }
     }
 
     /** One page per scanned image, each fitted on A4; long side 1800 px, JPEG quality 72 (~150–300 KB a page). */

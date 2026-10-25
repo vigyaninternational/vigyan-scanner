@@ -1362,7 +1362,8 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun send(target: Target, label: String, makeFiles: suspend () -> List<File>) = work(label) {
-        val files = makeFiles()
+        // A big export (many pages, high quality) can run the phone out of memory: a notice, not a crash.
+        val files = lowMemoryAsNotice { makeFiles() }
         if (files.isEmpty()) error("Nothing to export")
         when (target) {
             Target.PHONE -> {

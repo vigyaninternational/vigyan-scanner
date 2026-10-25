@@ -59,9 +59,11 @@ object Updater {
             instanceFollowRedirects = true
             setRequestProperty("User-Agent", "VigyanScanner")
         }
+        var expected = 0L
         try {
             if (conn.responseCode != 200) error("Download failed (${conn.responseCode})")
             val total = conn.contentLengthLong.takeIf { it > 0 } ?: release.size
+            expected = total
             conn.inputStream.use { input ->
                 part.outputStream().use { out ->
                     val buf = ByteArray(64 * 1024)
@@ -81,6 +83,11 @@ object Updater {
             }
         } finally {
             conn.disconnect()
+        }
+        // A dropped connection can end the stream early without an error: never install a cut-off APK.
+        if (expected > 0 && part.length() != expected) {
+            part.delete()
+            throw Notice("Download incomplete, try again")
         }
         if (!part.renameTo(dest)) error("Could not save the update")
     }
