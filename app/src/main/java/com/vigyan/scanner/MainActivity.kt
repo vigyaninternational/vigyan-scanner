@@ -195,6 +195,8 @@ class MainActivity : FragmentActivity() {
                 if (!Updater.install(this@MainActivity, apk)) {
                     vm.say("Turn on \"Allow from this source\" for Vigyan Scanner, come back, and tap Update again.")
                 }
+            } catch (e: Notice) {
+                vm.say(e.message ?: "")
             } catch (e: Exception) {
                 vm.say("Could not open the installer: ${e.message}")
             }

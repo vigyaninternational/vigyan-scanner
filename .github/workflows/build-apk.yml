@@ -35,7 +35,26 @@ jobs:
       - name: Unit tests (Smart Fill)
         run: ./gradlew testDebugUnitTest --stacktrace
 
+      # The private signing key lives only in this repository's secrets (Settings -> Secrets and
+      # variables -> Actions): SCANNER_KEYSTORE (the .jks file as base64) and SCANNER_KEY_PASSWORD.
+      - name: Signing key
+        env:
+          SCANNER_KEYSTORE: ${{ secrets.SCANNER_KEYSTORE }}
+        run: |
+          if [ -z "$SCANNER_KEYSTORE" ]; then
+            if [ "${{ github.event_name }}" = "push" ]; then
+              echo "::error::The SCANNER_KEYSTORE secret is missing, so this APK would not update the installed app. Add the secrets first (see the comment above)."
+              exit 1
+            fi
+            echo "::warning::No SCANNER_KEYSTORE secret: test build with the old test key (not for phones)."
+          else
+            echo "$SCANNER_KEYSTORE" | base64 -d > "$RUNNER_TEMP/scanner.jks"
+            echo "SCANNER_KEYSTORE_FILE=$RUNNER_TEMP/scanner.jks" >> "$GITHUB_ENV"
+          fi
+
       - name: Build APK
+        env:
+          SCANNER_KEY_PASSWORD: ${{ secrets.SCANNER_KEY_PASSWORD }}
         run: ./gradlew assembleDebug --stacktrace || (echo "Retrying after transient failure..." && sleep 20 && ./gradlew assembleDebug --stacktrace)
 
       - name: Rename APK

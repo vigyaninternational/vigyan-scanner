@@ -97,6 +97,12 @@ object Updater {
      * permission; if it's missing, that settings page opens instead and this returns false.
      */
     fun install(activity: Activity, apk: File): Boolean {
+        // From 26 Oct 2026 the Scanner is signed with the college's own key. An app installed
+        // before that has the old key, and Android refuses to update it over the top.
+        if (!sameSigner(activity, apk)) {
+            throw Notice("This update needs a fresh install: export or share any scans you need, uninstall Vigyan Scanner, " +
+                "then install it again from the same download link as before.")
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !activity.packageManager.canRequestPackageInstalls()) {
             activity.startActivity(
                 Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${activity.packageName}")),
@@ -111,4 +117,20 @@ object Updater {
         )
         return true
     }
+
+    /** True when the downloaded APK is signed with the same key as this installed app (or it can't be told). */
+    @Suppress("DEPRECATION")
+    private fun sameSigner(activity: Activity, apk: File): Boolean = try {
+        val pm = activity.packageManager
+        fun certs(info: android.content.pm.PackageInfo?): Set<String>? {
+            if (info == null) return null
+            val sigs = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) info.signingInfo?.apkContentsSigners else info.signatures
+            return sigs?.map { it.toCharsString() }?.toSet()
+        }
+        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES
+            else android.content.pm.PackageManager.GET_SIGNATURES
+        val mine = certs(pm.getPackageInfo(activity.packageName, flags))
+        val theirs = certs(pm.getPackageArchiveInfo(apk.path, flags))
+        mine == null || theirs == null || mine == theirs
+    } catch (e: Exception) { true }
 }

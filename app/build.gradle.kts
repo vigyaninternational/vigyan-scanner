@@ -19,20 +19,35 @@ android {
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
 
+    // The college's own private key (since 26 Oct 2026). It is NOT in this public repository:
+    // the GitHub build gets it from the secrets SCANNER_KEYSTORE (base64) and SCANNER_KEY_PASSWORD.
+    // Without them (a build on someone's own computer) the old test key below is used, and such an
+    // APK cannot update the real app.
+    val releaseKeystore = System.getenv("SCANNER_KEYSTORE_FILE")?.let { file(it) }?.takeIf { it.exists() }
+    val releasePassword = System.getenv("SCANNER_KEY_PASSWORD").orEmpty()
+
     signingConfigs {
-        // Fixed, committed debug key: every build is signed the same, so updates install over the top.
         getByName("debug") {
             storeFile = rootProject.file("config/debug.keystore")
             storePassword = "android"
             keyAlias = "androiddebugkey"
             keyPassword = "android"
         }
+        if (releaseKeystore != null) {
+            create("vigyan") {
+                storeFile = releaseKeystore
+                storePassword = releasePassword
+                keyAlias = "vigyanscanner"
+                keyPassword = releasePassword
+            }
+        }
     }
 
     buildTypes {
         debug {
-            isDebuggable = true
-            signingConfig = signingConfigs.getByName("debug")
+            // Signed with the private key on GitHub: then it is a normal (not debuggable) app.
+            isDebuggable = releaseKeystore == null
+            signingConfig = signingConfigs.getByName(if (releaseKeystore != null) "vigyan" else "debug")
         }
     }
 
