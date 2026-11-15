@@ -95,6 +95,8 @@ val HelpTopics = listOf(
             "◀ ▶ move the page earlier or later.",
             "⟳ turns it a quarter turn.",
             "⛶ crop / straighten: drag the 4 corners onto the page's corners, then Apply.",
+            "Curved page (a book page bending towards the spine): in ⛶ choose Curved page. The app finds the curve from the lines of text; drag the blue middle handles to fix it, then Apply to flatten the page.",
+            "Book (2 pages): photograph the open book, then in ⛶ choose Book (2 pages). Put the 4 corners on the book's outer corners; the orange line is the spine. Apply makes two flat pages, left then right.",
             "🎨 page look: Brighten, Remove shadows, Grayscale, Black & white, or Clear background pattern (for certificates). Tick \"all pages\" to do every page.",
             "✏ write on the page: pen, highlight, text, ticks, date, signature, seal, photo.",
             "✕ deletes the page.",

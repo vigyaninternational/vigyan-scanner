@@ -587,6 +587,13 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
         then()
     }
 
+    /** Book mode: the page becomes two (left, then right). */
+    fun savePageSplit(scan: Scan, index: Int, left: android.graphics.Bitmap, right: android.graphics.Bitmap, then: () -> Unit) = work("Saving the two pages…") {
+        io { repo.splitPage(scan, index, left, right) }
+        _message.value = "Split into 2 pages"
+        then()
+    }
+
     fun hasOriginal(page: File) = repo.hasOriginal(page)
 
     fun restoreOriginalPage(scan: Scan, index: Int) = work("Restoring…") {

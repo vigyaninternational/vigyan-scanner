@@ -162,6 +162,23 @@ class ScanRepository(private val context: Context) {
         setPages(scan, scan.pages)
     }
 
+    /**
+     * Book mode: one photo of an open book becomes two pages, left then right. The left page takes
+     * the photo's place (the photo is kept as its original, so "Undo all changes" brings it back);
+     * the right page is added straight after it.
+     */
+    fun splitPage(scan: Scan, index: Int, left: android.graphics.Bitmap, right: android.graphics.Bitmap) {
+        val page = scan.pages[index]
+        val orig = originalOf(page)
+        if (!orig.exists()) page.copyTo(orig)
+        Images.save(left, page, 92)
+        ocrFile(page).delete()
+        val second = File(scan.dir, newPageName())
+        Images.save(right, second, 92)
+        val pages = scan.pages.toMutableList().apply { add(index + 1, second) }
+        setPages(scan, pages)
+    }
+
     fun restoreOriginal(scan: Scan, index: Int) {
         val page = scan.pages[index]
         val orig = originalOf(page)
