@@ -19,11 +19,45 @@ import java.net.URL
 object Updater {
 
     private const val LATEST = "https://api.github.com/repos/vigyaninternational/vigyan-scanner/releases/latest"
+    // The release page itself: GitHub answers it with a redirect to the newest tag. Unlike the API
+    // above (about 60 checks an hour from one internet connection, so many phones on the college
+    // Wi-Fi run out), it has no such limit.
+    private const val REPO = "https://github.com/vigyaninternational/vigyan-scanner"
+    private const val APK_NAME = "VigyanScanner.apk"
+
+    /** "…/releases/tag/v1.0.50" → "v1.0.50". Pure, unit-tested. */
+    fun tagFromLocation(location: String?): String? =
+        location?.let { Regex("""/releases/tag/([^/?#]+)""").find(it)?.groupValues?.get(1) }
 
     class Release(val code: Int, val name: String, val url: String, val size: Long)
 
     /** The latest published release, or null if it has no APK. Blocking: call off the main thread. */
-    fun latest(): Release? {
+    fun latest(): Release? = runCatching { latestFromRedirect() }.getOrNull() ?: latestFromApi()
+
+    /** The newest tag from the release page's redirect; the APK is the one every release carries. */
+    private fun latestFromRedirect(): Release? {
+        val conn = (URL("$REPO/releases/latest").openConnection() as HttpURLConnection).apply {
+            instanceFollowRedirects = false
+            requestMethod = "HEAD"
+            connectTimeout = 15_000
+            readTimeout = 15_000
+            setRequestProperty("User-Agent", "VigyanScanner")
+        }
+        try {
+            if (conn.responseCode !in 300..399) return null
+            val tag = tagFromLocation(conn.getHeaderField("Location")) ?: return null
+            return Release(
+                code = Versions.codeFromTag(tag) ?: return null,
+                name = tag.removePrefix("v"),
+                url = "$REPO/releases/download/$tag/$APK_NAME",
+                size = 0L,   // the download's own length is checked instead
+            )
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    private fun latestFromApi(): Release? {
         val conn = (URL(LATEST).openConnection() as HttpURLConnection).apply {
             connectTimeout = 15_000
             readTimeout = 15_000

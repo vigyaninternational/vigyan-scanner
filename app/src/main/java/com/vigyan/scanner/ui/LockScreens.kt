@@ -65,8 +65,8 @@ fun fingerprintAvailable(context: android.content.Context): Boolean = try {
 fun LockScreen(lock: AppLock, onFingerprint: (() -> Unit)?, onUnlocked: () -> Unit) {
     var pin by remember { mutableStateOf("") }
     var error by remember { mutableStateOf("") }
-    var wrong by remember { mutableIntStateOf(0) }
-    var waitUntil by remember { mutableLongStateOf(0L) }
+    // The wait is kept by AppLock, so closing and reopening the app does not skip it.
+    var waitUntil by remember { mutableLongStateOf(lock.waitUntil) }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     val waiting = now < waitUntil
 
@@ -78,27 +78,29 @@ fun LockScreen(lock: AppLock, onFingerprint: (() -> Unit)?, onUnlocked: () -> Un
         now = System.currentTimeMillis()
     }
 
+    fun tryPin() {
+        if (lock.check(pin)) { lock.noteRight(); onUnlocked(); return }
+        pin = ""
+        val until = lock.noteWrong()
+        if (until > 0) {
+            waitUntil = until
+            error = ""
+        } else {
+            error = "Wrong PIN"
+        }
+    }
+
     fun press(k: String) {
         if (waiting) return
         when (k) {
             "⌫" -> pin = pin.dropLast(1)
-            "OK" -> if (pin.isNotEmpty()) {
-                if (lock.check(pin)) onUnlocked() else {
-                    wrong++
-                    pin = ""
-                    if (wrong % 5 == 0) {
-                        waitUntil = System.currentTimeMillis() + 30_000
-                        error = "Too many tries. Wait 30 seconds."
-                    } else {
-                        error = "Wrong PIN"
-                    }
-                }
-            }
+            "OK" -> if (pin.isNotEmpty()) tryPin()
             else -> if (pin.length < 6) {
                 pin += k
                 error = ""
-                // Opens as soon as the right PIN is typed (4 to 6 digits).
-                if (pin.length >= 4 && lock.check(pin)) onUnlocked()
+                // Opens as soon as the PIN's last digit is typed. Every such check counts as a try,
+                // so guessing by typing digits meets the same wait as pressing OK.
+                if (lock.pinLength > 0 && pin.length == lock.pinLength) tryPin()
             }
         }
     }
