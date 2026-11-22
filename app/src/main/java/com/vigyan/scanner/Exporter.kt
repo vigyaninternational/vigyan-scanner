@@ -76,7 +76,8 @@ object Exporter {
         mkdirs()
     }
 
-    fun safeName(name: String) = name.replace(Regex("""[\\/:*?"<>|]"""), "_").trim().ifBlank { "scan" }
+    /** Upload-safe file name (see [ConvertMath.uploadName]): portals refuse spaces, brackets and extra dots. */
+    fun safeName(name: String) = ConvertMath.uploadName(name, "scan")
 
     /**
      * Writes the chosen formats of [scan] into the cache export folder. [ocr] is the text of each
@@ -359,7 +360,7 @@ object Exporter {
             }
             PdfWriter.Page(pageW, pageH, placements)
         }
-        return File(exportDir(context), "${safeName(name)} ID cards A4.pdf").apply { outputStream().use { PdfWriter().write(pages, it) } }
+        return File(exportDir(context), "${safeName(name)}_ID_cards_A4.pdf").apply { outputStream().use { PdfWriter().write(pages, it) } }
     }
 
     /** A portal file and how it came out. [width]/[height] are 0 for a PDF. */

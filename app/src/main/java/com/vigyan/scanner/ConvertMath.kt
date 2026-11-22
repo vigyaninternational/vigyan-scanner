@@ -174,8 +174,16 @@ object ConvertMath {
             // ".jpg", ".jpeg", ".mp4" are extensions; ".2026" in "Fees.2026" (a typed name) is not.
             if (dot > 0 && n.length - dot in 2..5 && n.substring(dot + 1).any { it.isLetter() }) n.substring(0, dot) else n
         }
-        return noExt.replace(Regex("""[\\/:*?"<>|]"""), "_").replace(Regex("""\s+"""), " ").trim().take(80).ifBlank { fallback }
+        return uploadName(noExt, fallback)
     }
+
+    /**
+     * A file name government and college upload portals accept: only English letters, digits, "_" and "-".
+     * Spaces, brackets and extra dots ("Rahul Das 12.11.2026.pdf" looks like a double extension) are
+     * often refused as "not a valid PDF", so they become "_" ("Rahul_Das_12_11_2026").
+     */
+    fun uploadName(name: String, fallback: String = "file"): String =
+        name.replace(Regex("[^A-Za-z0-9_-]+"), "_").replace(Regex("_+"), "_").trim('_').take(60).trimEnd('_', '-').ifBlank { fallback }
 
     /** "name.jpg" for a single file, "name_page3.jpg" when there are several. */
     fun pageFileName(base: String, pageIndex: Int, count: Int, ext: String): String =

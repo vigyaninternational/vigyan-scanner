@@ -131,16 +131,21 @@ class ConvertMathTest {
 
     @Test
     fun namesFiles() {
-        assertEquals("Marksheet 10th", ConvertMath.baseName("Marksheet 10th.pdf"))
+        assertEquals("Marksheet_10th", ConvertMath.baseName("Marksheet 10th.pdf"))
         assertEquals("IMG_2026", ConvertMath.baseName("IMG_2026.jpeg"))
         assertEquals("a_b", ConvertMath.baseName("a/b"))
         assertEquals("file", ConvertMath.baseName("  "))
-        assertEquals("v1.2 notes", ConvertMath.baseName("v1.2 notes")) // a dot in the name is not an extension
+        assertEquals("v1_2_notes", ConvertMath.baseName("v1.2 notes")) // a dot in the name is not an extension
         // A typed name with a number after the dot keeps it.
-        assertEquals("Fees.2026", ConvertMath.baseName("Fees.2026"))
-        assertEquals("Report v1.2", ConvertMath.baseName("Report v1.2"))
+        assertEquals("Fees_2026", ConvertMath.baseName("Fees.2026"))
+        assertEquals("Report_v1_2", ConvertMath.baseName("Report v1.2"))
         assertEquals("scan", ConvertMath.baseName("scan.mp4"))
         assertEquals("photo", ConvertMath.baseName("photo.HEIC"))
+        // Upload portals refuse spaces, brackets and extra dots ("double extension").
+        assertEquals("Rahul_Das_12_11_2026", ConvertMath.baseName("Rahul Das 12.11.2026.jpg"))
+        assertEquals("Photo_1", ConvertMath.baseName("Photo (1).jpeg"))
+        assertEquals("IMG-20261122-WA0003", ConvertMath.baseName("IMG-20261122-WA0003.jpg"))
+        assertEquals("Photos", ConvertMath.baseName("ଫଟୋ.jpg", "Photos"))
         assertEquals("doc.jpg", ConvertMath.pageFileName("doc", 0, 1, "jpg"))
         assertEquals("doc_page3.png", ConvertMath.pageFileName("doc", 2, 5, "png"))
         assertEquals("a.jpg", ConvertMath.uniqueFileName("a.jpg", setOf("b.jpg")))

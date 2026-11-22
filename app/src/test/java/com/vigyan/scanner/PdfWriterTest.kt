@@ -67,6 +67,18 @@ class PdfWriterTest {
     }
 
     @Test
+    fun documentInformationAndStrictStructure() {
+        PDDocument.load(pdf()).use { doc ->
+            assertEquals("Vigyan Scanner", doc.documentInformation.producer)
+            assertTrue(doc.documentInformation.creationDate != null)
+            assertEquals(1.4f, doc.version, 0.001f)
+        }
+        val text = String(pdf(), Charsets.ISO_8859_1)
+        assertTrue(text.startsWith("%PDF-1.4\n"))
+        assertTrue(text.trimEnd().endsWith("%%EOF"))
+    }
+
+    @Test
     fun passwordProtected() {
         val bytes = pdf("vigyan123")
         try {

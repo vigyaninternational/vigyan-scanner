@@ -70,13 +70,21 @@ class PdfWriter {
             val xobjects = imageNums.mapIndexed { i, n -> "/Im$i $n 0 R" }.joinToString(" ")
             bodies[pageNum] = latin1L(
                 "<< /Type /Page /Parent $pagesObj 0 R /MediaBox [0 0 ${num(page.width)} ${num(page.height)}] " +
-                    "/Resources << /Font << /F1 $font 0 R >> /XObject << $xobjects >> >> /Contents $contentNum 0 R >>",
+                    "/Resources << /ProcSet [/PDF /Text /ImageC] /Font << /F1 $font 0 R >> /XObject << $xobjects >> >> /Contents $contentNum 0 R >>",
             )
         }
         bodies[font] = latin1L("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
         bodies[pagesObj] = latin1L("<< /Type /Pages /Kids [${pageNums.joinToString(" ") { "$it 0 R" }}] /Count ${pageNums.size} >>")
         bodies[catalog] = latin1L("<< /Type /Catalog /Pages $pagesObj 0 R >>")
         val encryptNum = security?.let { s -> (next++).also { bodies[it] = latin1L(s.dictionary()) } }
+        // The document information (who made it, when): some upload portals check for it. Left out of a
+        // locked PDF, whose strings would also need encrypting.
+        val infoNum = if (security == null) (next++).also {
+            val now = java.text.SimpleDateFormat("yyyyMMddHHmmss", Locale.US).format(java.util.Date())
+            val tz = java.util.TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 60000
+            val zone = (if (tz >= 0) "+" else "-") + String.format(Locale.US, "%02d'%02d'", Math.abs(tz) / 60, Math.abs(tz) % 60)
+            bodies[it] = latin1L("<< /Producer (Vigyan Scanner) /Creator (Vigyan Scanner) /CreationDate (D:$now$zone) /ModDate (D:$now$zone) >>")
+        } else null
 
         // Written straight to [out] (counting bytes for the xref), so a 300-page PDF is not held in memory twice.
         val buf = CountingStream(out.buffered(64 * 1024))
@@ -95,6 +103,7 @@ class PdfWriter {
         val hexId = id.joinToString("") { "%02X".format(it) }
         sb.append("trailer\n<< /Size $next /Root $catalog 0 R /ID [<$hexId> <$hexId>]")
         if (encryptNum != null) sb.append(" /Encrypt $encryptNum 0 R")
+        if (infoNum != null) sb.append(" /Info $infoNum 0 R")
         sb.append(" >>\nstartxref\n$xref\n%%EOF\n")
         buf.write(latin1(sb.toString()))
         buf.flush()
