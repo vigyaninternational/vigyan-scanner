@@ -149,8 +149,8 @@ class ConvertMathTest {
         assertEquals("doc.jpg", ConvertMath.pageFileName("doc", 0, 1, "jpg"))
         assertEquals("doc_page3.png", ConvertMath.pageFileName("doc", 2, 5, "png"))
         assertEquals("a.jpg", ConvertMath.uniqueFileName("a.jpg", setOf("b.jpg")))
-        assertEquals("a (2).jpg", ConvertMath.uniqueFileName("a.jpg", setOf("a.jpg")))
-        assertEquals("a (3).jpg", ConvertMath.uniqueFileName("a.jpg", setOf("a.jpg", "a (2).jpg")))
+        assertEquals("a_2.jpg", ConvertMath.uniqueFileName("a.jpg", setOf("a.jpg")))
+        assertEquals("a_3.jpg", ConvertMath.uniqueFileName("a.jpg", setOf("a.jpg", "a_2.jpg")))
     }
 
     @Test

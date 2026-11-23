@@ -171,9 +171,7 @@ object Images {
         val out = mutableListOf<File>()
         var n = 0
         for (uri in uris) {
-            val type = context.contentResolver.getType(uri).orEmpty()
-            val isPdf = type == "application/pdf" || uri.toString().lowercase().endsWith(".pdf")
-            if (isPdf) {
+            if (Convert.isPdf(context, uri)) {
                 val fd = context.contentResolver.openFileDescriptor(uri, "r") ?: error("Could not open the PDF")
                 try {
                     val pdf = PdfRenderer(fd)

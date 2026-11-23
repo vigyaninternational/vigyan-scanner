@@ -57,9 +57,23 @@ object Convert {
         return name to size
     }
 
+    /**
+     * A PDF by its type, its name, or its first bytes ("%PDF"): a PDF shared from WhatsApp or some
+     * browsers comes as "application/octet-stream" with an address that doesn't end in .pdf.
+     */
     fun isPdf(context: Context, uri: Uri): Boolean {
         val type = context.contentResolver.getType(uri).orEmpty()
-        return type == "application/pdf" || uri.toString().lowercase().endsWith(".pdf")
+        if (type == "application/pdf" || uri.toString().lowercase().endsWith(".pdf")) return true
+        if (type.startsWith("image/")) return false
+        if (nameAndSize(context, uri).first.lowercase().endsWith(".pdf")) return true
+        return runCatching {
+            context.contentResolver.openInputStream(uri)?.use { s ->
+                val head = ByteArray(5)
+                var got = 0
+                while (got < 5) { val r = s.read(head, got, 5 - got); if (r < 0) break; got += r }
+                got == 5 && String(head, Charsets.ISO_8859_1) == "%PDF-"
+            } ?: false
+        }.getOrDefault(false)
     }
 
     /** Copies a picked file into the working folder (it stays readable after the picker closes). */

@@ -465,9 +465,13 @@ object Exporter {
         if (tree != null) {
             try {
                 val parent = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
+                // A free name is picked here ("name_2.pdf"): left to Android it becomes "name (1).pdf",
+                // with a space and brackets that upload portals refuse.
+                val existing = namesIn(context, DocumentsContract.buildChildDocumentsUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree)),
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME, null, null)
                 for (file in files) {
-                    // Android adds " (1)" itself when the name is taken.
-                    val doc = DocumentsContract.createDocument(context.contentResolver, parent, mimeOf(file), file.name)
+                    val name = ConvertMath.firstFreeName(file.name) { it.lowercase() in existing }.also { existing += it.lowercase() }
+                    val doc = DocumentsContract.createDocument(context.contentResolver, parent, mimeOf(file), name)
                         ?: error("Could not create ${file.name}")
                     context.contentResolver.openOutputStream(doc)?.use { out -> file.inputStream().use { it.copyTo(out) } }
                         ?: error("Could not write ${file.name}")
@@ -477,10 +481,16 @@ object Exporter {
                 error("The chosen folder can't be used any more. Pick it again in Settings.")
             }
         }
+        // Names already in Download/Vigyan Scanner (those this app saved): a free name is picked here
+        // ("name_2.pdf"), not Android's "name (1).pdf", which upload portals refuse.
+        val inDownloads = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) namesIn(context, MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+            MediaStore.Downloads.DISPLAY_NAME, "${MediaStore.Downloads.RELATIVE_PATH} LIKE ?", arrayOf(Environment.DIRECTORY_DOWNLOADS + "/" + FOLDER + "%"))
+        else mutableSetOf()
         for (file in files) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val name = ConvertMath.firstFreeName(file.name) { it.lowercase() in inDownloads }.also { inDownloads += it.lowercase() }
                 val values = ContentValues().apply {
-                    put(MediaStore.Downloads.DISPLAY_NAME, file.name)
+                    put(MediaStore.Downloads.DISPLAY_NAME, name)
                     put(MediaStore.Downloads.MIME_TYPE, mimeOf(file))
                     put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/" + FOLDER)
                 }
@@ -492,14 +502,23 @@ object Exporter {
                 @Suppress("DEPRECATION")
                 val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), FOLDER)
                 dir.mkdirs()
-                var dest = File(dir, file.name)
-                var n = 1
-                while (dest.exists()) dest = File(dir, "${file.nameWithoutExtension} (${n++}).${file.extension}")
+                val dest = File(dir, ConvertMath.firstFreeName(file.name) { File(dir, it).exists() })
                 file.copyTo(dest)
                 MediaScannerConnection.scanFile(context, arrayOf(dest.absolutePath), arrayOf(mimeOf(file)), null)
             }
         }
         return "Download/$FOLDER"
+    }
+
+    /** The display names (lower case) a query of [uri] gives; empty when it can't be read. */
+    private fun namesIn(context: Context, uri: Uri, column: String, selection: String?, args: Array<String>?): MutableSet<String> {
+        val names = mutableSetOf<String>()
+        runCatching {
+            context.contentResolver.query(uri, arrayOf(column), selection, args, null)?.use { c ->
+                while (c.moveToNext()) c.getString(0)?.let { names += it.lowercase() }
+            }
+        }
+        return names
     }
 
     fun isDriveInstalled(context: Context): Boolean =

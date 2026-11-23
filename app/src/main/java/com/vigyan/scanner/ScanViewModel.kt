@@ -211,7 +211,7 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
                 val s = if (files != null) repo.createFromFiles(files, name, folderForNew) else repo.create(uris, name, folderForNew)
                 repo.setExtra(s, "person", person.trim())
                 repo.setExtra(s, "ref", ref.trim())
-                repo.get(s.id)!!
+                repo.need(s.id)
             }
             reload()
             then(scan)
@@ -258,7 +258,7 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
                     else -> null
                 }
                 if (name != null) {
-                    io { repo.rename(repo.get(scan.id)!!, uniqueName(name)) }
+                    io { repo.rename(repo.need(scan.id), uniqueName(name)) }
                     reload()
                     named++
                 }
@@ -648,7 +648,7 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
         io {
             repo.setFolder(current, type.folder)
             if (defaultName.matches(current.name)) {
-                repo.rename(repo.get(scan.id)!!, if (person.isNullOrBlank()) "${type.label} ${stamp()}" else "${type.label} - $person")
+                repo.rename(repo.need(scan.id), if (person.isNullOrBlank()) "${type.label} ${stamp()}" else "${type.label} - $person")
             }
         }
         return "Sorted as ${type.label} → folder \"${type.folder}\""
@@ -1123,7 +1123,7 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
             val (fields, _) = extractFields(scan, prefix)
             io {
                 repo.saveFields(scan, fields)
-                autoName(repo.get(scan.id)!!, fields)
+                autoName(repo.need(scan.id), fields)
             }
         }
         _currentFolder.value = folder
@@ -1150,7 +1150,7 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
         }
         return io {
             missing.zip(results).forEach { (page, ocr) -> repo.savePageOcr(page, ocr) }
-            repo.rebuildText(repo.get(scan.id)!!)
+            repo.rebuildText(repo.need(scan.id))
         }
     }
 
@@ -1219,7 +1219,7 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
     fun saveFields(scan: Scan, fields: Map<String, String>) = work("Saving…") {
         io {
             repo.saveFields(scan, fields)
-            autoName(repo.get(scan.id)!!, fields)
+            autoName(repo.need(scan.id), fields)
         }
         _message.value = "Form saved"
     }

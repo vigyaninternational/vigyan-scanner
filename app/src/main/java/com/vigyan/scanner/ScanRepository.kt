@@ -57,6 +57,9 @@ class ScanRepository(private val context: Context) {
 
     fun get(id: String): Scan? = load(File(root, id))
 
+    /** The scan [id]; a clear message when it was deleted meanwhile (e.g. while its text was being read). */
+    fun need(id: String): Scan = get(id) ?: throw Notice("That scan was deleted meanwhile, so it was not changed.")
+
     /** A new scan from the scanner's result or other image files (copied in). */
     fun create(pages: List<Uri>, name: String? = null, folder: String = ""): Scan {
         val dir = newDir()

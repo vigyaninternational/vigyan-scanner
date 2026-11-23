@@ -189,15 +189,21 @@ object ConvertMath {
     fun pageFileName(base: String, pageIndex: Int, count: Int, ext: String): String =
         if (count <= 1) "$base.$ext" else "${base}_page${pageIndex + 1}.$ext"
 
-    /** [name], or "name (2)", "name (3)"… so no two files in one ZIP / folder share a name. */
-    fun uniqueFileName(name: String, taken: Set<String>): String {
-        if (name !in taken) return name
+    /**
+     * [name], or "name_2", "name_3"… so no two files in one ZIP / folder share a name. Not "name (2)":
+     * upload portals refuse spaces and brackets (see [uploadName]).
+     */
+    fun uniqueFileName(name: String, taken: Set<String>): String = firstFreeName(name) { it in taken }
+
+    /** [name], or the first of "name_2", "name_3"… that [taken] says is free (names compared ignoring case). */
+    fun firstFreeName(name: String, taken: (String) -> Boolean): String {
+        if (!taken(name)) return name
         val dot = name.lastIndexOf('.')
         val stem = if (dot > 0) name.substring(0, dot) else name
         val ext = if (dot > 0) name.substring(dot) else ""
         var n = 2
-        while ("$stem ($n)$ext" in taken) n++
-        return "$stem ($n)$ext"
+        while (taken("${stem}_$n$ext")) n++
+        return "${stem}_$n$ext"
     }
 
     /** File size as people read it: "850 KB", "2.4 MB". */
